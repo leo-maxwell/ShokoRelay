@@ -8,6 +8,8 @@ namespace ShokoRelay.Config
     public class ConfigProvider
     {
         private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
+        private static RelayConfig CreateDefaultSettings() => new RelayConfig();
+
         private readonly string _filePath;
         private readonly object _settingsLock = new();
         private RelayConfig? _settings;
@@ -20,7 +22,7 @@ namespace ShokoRelay.Config
 
         public ConfigProvider(IApplicationPaths applicationPaths)
         {
-            _filePath = Path.Combine(applicationPaths.ProgramDataPath, "ShokoRelayConfig.json");
+            _filePath = Path.Combine(applicationPaths.ProgramDataPath, ConfigConstants.ConfigFileName);
             Logger.Info($"Config path: {_filePath}");
         }
 
@@ -37,9 +39,7 @@ namespace ShokoRelay.Config
             var json = JsonSerializer.Serialize(settings, Options);
             lock (_settingsLock)
             {
-                using FileStream stream = new(_filePath, FileMode.Create);
-                using StreamWriter writer = new(stream);
-                writer.Write(json);
+                File.WriteAllText(_filePath, json);
             }
 
             _settings = settings;
@@ -49,46 +49,65 @@ namespace ShokoRelay.Config
         private RelayConfig GetSettingsFromFile()
         {
             RelayConfig settings;
+            var needsSave = false;
+
             try
             {
                 var contents = File.ReadAllText(_filePath);
-                settings = JsonSerializer.Deserialize<RelayConfig>(contents, Options) ?? new RelayConfig();
-                Logger.Info("Config loaded from file.");
+                settings = JsonSerializer.Deserialize<RelayConfig>(contents, Options)!;
+
+                if (settings is null)
+                {
+                    settings = CreateDefaultSettings();
+                    needsSave = true;
+                    Logger.Warn("Config file empty or invalid JSON, using defaults.");
+                }
+                else
+                {
+                    Logger.Info("Config loaded from file.");
+                }
             }
             catch (FileNotFoundException)
             {
-                settings = new RelayConfig();
+                settings = CreateDefaultSettings();
+                needsSave = true;
                 Logger.Info("Config file not found, creating defaults.");
             }
             catch (JsonException ex)
             {
+                settings = CreateDefaultSettings();
+                needsSave = true;
                 Logger.Warn($"Invalid config file, using defaults: {ex.Message}");
-                settings = new RelayConfig();
             }
 
             ValidateSettings(settings);
-            SaveSettings(settings);
+
+            if (needsSave)
+                SaveSettings(settings);
+
             return settings;
         }
 
         private static void ValidateSettings(RelayConfig settings)
         {
-            List<ValidationResult> validationResults = [];
-            ValidationContext validationContext = new(settings);
+            var validationResults = new List<ValidationResult>();
+            var validationContext = new ValidationContext(settings);
 
             var isValid = Validator.TryValidateObject(settings, validationContext, validationResults, true);
+            if (isValid)
+                return;
 
-            if (!isValid)
+            foreach (var validationResult in validationResults)
             {
-                foreach (var validationResult in validationResults)
+                foreach (var memberName in validationResult.MemberNames)
                 {
-                    foreach (var memberName in validationResult.MemberNames)
-                    {
-                        Logger.Error($"Error validating settings for property {memberName}: {validationResult.ErrorMessage}");
-                    }
+                    Logger.Error(
+                        $"Error validating settings for property {memberName}: {validationResult.ErrorMessage}"
+                    );
                 }
-                throw new ArgumentException("Error in settings validation");
             }
+
+            throw new ArgumentException("Error in settings validation");
         }
     }
 }

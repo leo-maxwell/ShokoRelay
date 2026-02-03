@@ -12,6 +12,17 @@ namespace ShokoRelay.Meta
             public int? EndEpisode; 
         }
 
+        public static string GetSeasonTitle(int seasonNumber)
+        {
+            if (seasonNumber ==  0) return "Specials";
+            if (seasonNumber == 95) return "Other";
+            if (seasonNumber == 96) return "Credits";
+            if (seasonNumber == 97) return "Trailers";
+            if (seasonNumber == 98) return "Parodies";
+            if (seasonNumber == 99) return "Unknown";
+            return $"Season {seasonNumber}";
+        }
+
         public static PlexCoords GetPlexCoordinates(IEpisode e)
         {
             if (ShokoRelay.Settings.TMDBStructure && e is IShokoEpisode shokoEpisode)
@@ -111,17 +122,6 @@ namespace ShokoRelay.Meta
                 Episode = start.Episode,
                 EndEpisode = endEpisodeFinal
             };
-        }
-
-        public static string GetSeasonTitle(int seasonNumber)
-        {
-            if (seasonNumber ==  0) return "Specials";
-            if (seasonNumber == 95) return "Other";
-            if (seasonNumber == 96) return "Credits";
-            if (seasonNumber == 97) return "Trailers";
-            if (seasonNumber == 98) return "Parodies";
-            if (seasonNumber == 99) return "Unknown";
-            return $"Season {seasonNumber}";
         }
     }
 }

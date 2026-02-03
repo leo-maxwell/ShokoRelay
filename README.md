@@ -2,10 +2,10 @@
 [![Discord](https://img.shields.io/discord/96234011612958720?logo=discord&logoColor=fff&label=Discord&color=5865F2 "Shoko Discord")](https://discord.com/channels/96234011612958720/268484849419943936)
 -
 This is a plugin for Shoko Server that acts as a [Custom Metadata Provider](https://forums.plex.tv/t/announcement-custom-metadata-providers/934384) for Plex.
-It is a successor to the [ShokoRelay.bundle](https://github.com/natyusha/ShokoRelay.bundle) legacy agent/scanner and intends to mirror all of its features. Scanning is much faster now and it will be possible to add many new features as well.
+It is a successor to the [ShokoRelay.bundle](https://github.com/natyusha/ShokoRelay.bundle) legacy agent/scanner and intends to mirror all of its functionality. Scanning is much faster and it will be possible to add many new features as well.
 Due to the lack of a custom scanner this plugin leverages [.plexmatch](https://support.plex.tv/articles/plexmatch/) files to ensure that varied folder structures are supported.
-This means that your anime can be organised with whatever file or folder structure you want. The only caveat is that a folder cannot contain more than one AniDB series at a time (subfolders are fine).
-These matching files will be automatically generated when a file move or rename is detected by Shoko. This means that the potentially lengthy first time generation should only be a one time deal.
+This means that your anime can be organised with whatever file or folder structure you want. The only caveat is that a folder cannot contain more than one AniDB series at a time in order to support theme songs for each one (subfolders are fine).
+The matching files will be automatically generated when a file move or rename is detected by Shoko. This means that the potentially lengthy first time generation should only be a one time deal.
 
 ## Installation
 #### Shoko
@@ -48,6 +48,7 @@ Due to this plugin relying on Shoko's plugin abstractions as well as Plex still 
 - season posters (not in shoko plugin abstractions)
 - taglines (does anyone care?)
 - user score
+- country
 - episode groups (custom seasons)
 - tvdbid [from xrefs] (for default theme songs)
 

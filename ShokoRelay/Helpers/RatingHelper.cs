@@ -4,29 +4,71 @@ namespace ShokoRelay.Helpers
 {
     public static class RatingHelper
     {
-        public static string? GetContentRating(ISeries series)
+        private static readonly HashSet<string> RatingTags = new(StringComparer.OrdinalIgnoreCase)
         {
-            if (!ShokoRelay.Settings.ContentRatings) return null;
+            "kodomo", "mina", "shoujo", "shounen",
+            "josei", "seinen", "borderline porn", "18 restricted",
+            "nudity", "sex", "violence", "sexual humour"
+        };
 
-            // Get all tags as lowercase for comparison
-            var tags = series.Tags.Select(t => t.Name.ToLowerInvariant()).ToHashSet();
-            string? rating = null;
+        public static (string? Rating, bool IsAdult) GetContentRatingAndAdult(ISeries? series)
+        {
+            var tagSet = BuildTagSet(series);
 
-            // If the rating wasn't already determined using the content indicators above take the lowest target audience rating
-            if (tags.Contains("kodomo"))             rating = "TV-Y";
-            else if (tags.Contains("mina"))          rating = "TV-G";
-            else if (tags.Contains("shoujo") || 
-                     tags.Contains("shounen"))       rating = "TV-PG";
-            else if (tags.Contains("josei") || 
-                     tags.Contains("seinen"))        rating = "TV-14";
+            // If 18 restricted is present override the contentRatings setting
+            if (tagSet.Contains("18 restricted"))
+                return ("X", true);
 
-            // Override any previous rating for borderline porn content
-            if (tags.Contains("borderline porn"))    rating = "TV-MA";
+            if (!ShokoRelay.Settings.ContentRatings)
+                return (null, false);
 
-            // Override any previous rating and remove content indicators for 18 restricted content
-            if (tags.Contains("18 restricted"))     rating = "X";
+            // A rough approximation of: http://www.tvguidelines.org/resources/TheRatings.pdf
+            // Uses the content indicators described here: https://wiki.anidb.net/Categories:Content_Indicators
+            var descriptorD = tagSet.Contains("sexual humour") ? "D" : "";
+            var descriptorS = (tagSet.Contains("nudity") || tagSet.Contains("sex")) ? "S" : "";
+            var descriptorV = tagSet.Contains("violence") ? "V" : "";
+            var descriptor  = (descriptorD + descriptorS + descriptorV) != "" ? "-" + (descriptorD + descriptorS + descriptorV) : "";
 
-            return rating;
+            // Uses the target audience tags on AniDB: https://anidb.net/tag/2606/animetb
+            string? c_rating = null;
+            if (tagSet.Contains("kodomo")) c_rating = "TV-Y";
+            else if (tagSet.Contains("mina")) c_rating = "TV-G";
+            else if (tagSet.Contains("shoujo") || tagSet.Contains("shounen")) c_rating = "TV-PG";
+            else if (tagSet.Contains("josei") || tagSet.Contains("seinen")) c_rating = "TV-14";
+
+            if (tagSet.Contains("borderline porn")) c_rating = "TV-MA";
+
+            if (!string.IsNullOrEmpty(c_rating))
+                c_rating = c_rating + descriptor;
+
+            return (c_rating, false);
+        }
+
+        private static HashSet<string> BuildTagSet(ISeries? series)
+        {
+            var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (series?.Tags == null) return set;
+
+            foreach (var t in series.Tags)
+            {
+                if (t == null) continue;
+                var name = t.Name?.Trim();
+                if (string.IsNullOrWhiteSpace(name)) continue;
+
+                var srcProp = t.GetType().GetProperty("Source");
+                if (srcProp != null)
+                {
+                    var srcVal = srcProp.GetValue(t) as string;
+                    if (!string.IsNullOrEmpty(srcVal) && srcVal.Equals("User", StringComparison.OrdinalIgnoreCase))
+                        continue;
+                }
+
+                if (!RatingTags.Contains(name)) continue;
+
+                set.Add(name);
+            }
+
+            return set;
         }
     }
 }

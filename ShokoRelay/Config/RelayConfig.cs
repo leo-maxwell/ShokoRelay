@@ -3,6 +3,7 @@ using System.ComponentModel;
 
 namespace ShokoRelay.Config
 {
+    public static class ConfigConstants { public const string ConfigFileName = "ShokoRelayConfig.json"; }
     public class RelayConfig
     {
         [Display(Name = "Series Title Language", Description = "Languages separated by comma (e.g. SHOKO, X-JAT, EN).")]

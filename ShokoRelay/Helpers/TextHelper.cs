@@ -6,7 +6,6 @@ namespace ShokoRelay.Helpers
 {
     public static class TextHelper
     {
-        #region Static
         // https://github.com/ShokoAnime/ShokoServer/blob/9c0ae9208479420dea3b766156435d364794e809/Shoko.Server/Utilities/TagFilter.cs#L37
         private static readonly HashSet<string> TagBlacklistAniDBHelpers = new(StringComparer.OrdinalIgnoreCase)
         {
@@ -32,7 +31,6 @@ namespace ShokoRelay.Helpers
         private static readonly HashSet<string> _forceLower              = new(["a", "an", "the", "and", "but", "or", "nor", "at", "by", "for", "from", "in", "into", "of", "off", "on", "onto", "out", "over", "per", "to", "up", "with", "as", "4-koma", "-hime", "-kei", "-kousai", "-sama", "-warashi", "no", "vs", "x"], StringComparer.OrdinalIgnoreCase);
         private static readonly HashSet<string> _forceUpper              = new(["3d", "bdsm", "cg", "cgi", "ed", "fff", "ffm", "ii", "milf", "mmf", "mmm", "npc", "op", "rpg", "tbs", "tv"], StringComparer.OrdinalIgnoreCase);
         private static readonly Dictionary<string, string> _forceSpecial = new(new Dictionary<string, string> { { "comicfesta", "ComicFesta" }, { "d'etat", "d'Etat" }, { "noitamina", "noitaminA" } }, StringComparer.OrdinalIgnoreCase);
-        #endregion
 
         public static object[] GetFilteredTags(ISeries series)
         {

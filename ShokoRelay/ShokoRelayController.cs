@@ -82,8 +82,8 @@ namespace ShokoRelay.Controllers
                 series,
                 BaseUrl,
                 TextHelper.ResolveFullSeriesTitles(series),
-                RatingHelper.GetContentRating(series) ?? "",
-                MapHelper.GetSeriesFileData(series)
+                RatingHelper.GetContentRatingAndAdult(series).Rating ?? "",
+                GetSeriesFileData(series)
             );
         }
 
@@ -189,14 +189,14 @@ namespace ShokoRelay.Controllers
                     }
                 }
 
-                return WrapInContainer(_mapper.MapEpisode(episode, coords, ctx.Series, BaseUrl, ApiRoot, ctx.Titles, partIndex, tmdbEpisode));
+                return WrapInContainer(_mapper.MapEpisode(episode, coords, ctx.Series, ctx.Titles, partIndex, tmdbEpisode));
             }
 
             // --- SEASON ---
             if (ratingKey.Contains(SeasonPrefix))
             {
                 int sNum = int.Parse(ratingKey.Split(SeasonPrefix)[1]);
-                var seasonMeta = _mapper.MapSeason(ctx.Series, sNum, BaseUrl, ApiRoot, ctx.Titles.DisplayTitle);
+                var seasonMeta = _mapper.MapSeason(ctx.Series, sNum, ctx.Titles.DisplayTitle);
 
                 if (includeChildren == 1)
                 {
@@ -208,12 +208,12 @@ namespace ShokoRelay.Controllers
             }
 
             // --- SERIES ---
-            var showMeta = _mapper.MapSeries(ctx.Series, BaseUrl, ApiRoot, ctx.Titles);
+            var showMeta = _mapper.MapSeries(ctx.Series, ctx.Titles);
 
             if (includeChildren == 1)
             {
                 var seasons = ctx.FileData.Seasons
-                    .Select(s => _mapper.MapSeason(ctx.Series, s, BaseUrl, ApiRoot, ctx.Titles.DisplayTitle))
+                    .Select(s => _mapper.MapSeason(ctx.Series, s, ctx.Titles.DisplayTitle))
                     .ToList();
 
                 ((IDictionary<string, object?>)showMeta)["Children"] = new { size = seasons.Count, Metadata = seasons };
@@ -235,7 +235,7 @@ namespace ShokoRelay.Controllers
             }
 
             var seasons = ctx.FileData.Seasons
-                .Select(s => _mapper.MapSeason(ctx.Series, s, BaseUrl, ApiRoot, ctx.Titles.DisplayTitle))
+                .Select(s => _mapper.MapSeason(ctx.Series, s, ctx.Titles.DisplayTitle))
                 .ToList();
 
             return WrapInPagedContainer(seasons);
@@ -250,7 +250,7 @@ namespace ShokoRelay.Controllers
             var allEpisodes = ctx.FileData.Mappings
                 .OrderBy(m => m.Coords.Season)
                 .ThenBy(m => m.Coords.Episode)
-                .Select(m => _mapper.MapEpisode(m.PrimaryEpisode, m.Coords, ctx.Series, BaseUrl, ApiRoot, ctx.Titles, m.PartIndex, m.TmdbEpisode))
+                .Select(m => _mapper.MapEpisode(m.PrimaryEpisode, m.Coords, ctx.Series, ctx.Titles, m.PartIndex, m.TmdbEpisode))
                 .ToList();
 
             return WrapInPagedContainer(allEpisodes);
@@ -287,7 +287,7 @@ namespace ShokoRelay.Controllers
                             title = series.PreferredTitle,
                             year = series.AirDate?.Year,
                             score = 100,
-                            thumb = poster != null ? ImageHelper.GetImageUrl(poster, BaseUrl, ApiRoot) : null
+                            thumb = poster != null ? ImageHelper.GetImageUrl(poster) : null
                         }
                     }
                 }
@@ -315,7 +315,7 @@ namespace ShokoRelay.Controllers
             {
                 if (m.Episodes.Count == 1)
                 {
-                    items.Add((m.Coords, _mapper.MapEpisode(m.PrimaryEpisode, m.Coords, ctx.Series, BaseUrl, ApiRoot, ctx.Titles, m.PartIndex, m.TmdbEpisode)));
+                    items.Add((m.Coords, _mapper.MapEpisode(m.PrimaryEpisode, m.Coords, ctx.Series, ctx.Titles, m.PartIndex, m.TmdbEpisode)));
                     continue;
                 }
 
@@ -323,7 +323,7 @@ namespace ShokoRelay.Controllers
                 {
                     var coordsEp = GetPlexCoordinates(ep);
                     if (coordsEp.Season != seasonNum) continue;
-                    items.Add((coordsEp, _mapper.MapEpisode(ep, coordsEp, ctx.Series, BaseUrl, ApiRoot, ctx.Titles)));
+                    items.Add((coordsEp, _mapper.MapEpisode(ep, coordsEp, ctx.Series, ctx.Titles)));
                 }
             }
 

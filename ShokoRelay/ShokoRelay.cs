@@ -1,8 +1,10 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+﻿using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 using Shoko.Plugin.Abstractions.DataModels;
 using Shoko.Plugin.Abstractions;
 using NLog;
 using ShokoRelay.Config;
+using ShokoRelay.Helpers;
 using ShokoRelay.Meta;
 
 namespace ShokoRelay
@@ -11,6 +13,7 @@ namespace ShokoRelay
     {
         public void RegisterServices(IServiceCollection serviceCollection, IApplicationPaths applicationPaths)
         {
+            serviceCollection.AddHttpContextAccessor();
             serviceCollection.AddControllers()
                 .AddApplicationPart(typeof(ServiceRegistration).Assembly);
             serviceCollection.AddSingleton(new ConfigProvider(applicationPaths));
@@ -31,11 +34,17 @@ namespace ShokoRelay
         private readonly IShokoEventHandler _eventHandler;
         private readonly PlexMatching _plexMatcher;
 
-        public ShokoRelay(IShokoEventHandler eventHandler, PlexMatching plexMatcher, IApplicationPaths applicationPaths)
+        public ShokoRelay(
+            IShokoEventHandler eventHandler,
+            PlexMatching plexMatcher,
+            IApplicationPaths applicationPaths,
+            IHttpContextAccessor httpContextAccessor)
         {
             _eventHandler = eventHandler;
             _plexMatcher = plexMatcher;
             _configProvider = new ConfigProvider(applicationPaths);
+
+            ImageHelper.HttpContextAccessor = httpContextAccessor;
 
             Logger.Info($"ShokoRelay v{ShokoRelayInfo.Version} loaded.");
         }

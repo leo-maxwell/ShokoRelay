@@ -132,16 +132,7 @@ namespace ShokoRelay.Helpers
             return result;
         }
 
-        public static bool IsHidden(IEpisode e)
-        {
-            try { return ((dynamic)e).IsHidden == true; }
-            catch { return false; }
-        }
-
-        private static string GetEpisodeTypeString(IEpisode ep)
-        {
-            try { return ((dynamic)ep).Type?.ToString() ?? ""; }
-            catch { return ""; }
-        }
+        public static bool IsHidden(IEpisode e) { return e is IShokoEpisode shokoEp && shokoEp.IsHidden;}
+        private static string GetEpisodeTypeString(IEpisode ep) { return ep.Type.ToString(); }
     }
 }
