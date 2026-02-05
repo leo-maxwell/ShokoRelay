@@ -38,16 +38,6 @@ namespace ShokoRelay.Meta
             ".srt", ".smi", ".ssa", ".ass", ".vtt"
         };
 
-        // Special buckets for fallback seasons
-        private static readonly Dictionary<int, (string Folder, string Prefix)> SpecialSeasons = new()
-        {
-            { 95, ("Featurettes", "Other") },
-            { 96, ("Shorts", "Credits") },
-            { 97, ("Trailers", "Trailers") },
-            { 98, ("Scenes", "Parody") },
-            { 99, ("Other", "Unknown") }
-        };
-
         public VfsBuilder(IMetadataService metadataService, IApplicationPaths applicationPaths)
         {
             _metadataService = metadataService;
@@ -152,8 +142,17 @@ namespace ShokoRelay.Meta
                 return (0, 0, errors, 0);
             }
 
-            int maxEpNum = fileData.Mappings.Max(m => m.Coords.EndEpisode ?? m.Coords.Episode);
+            var coordCounts = fileData.Mappings
+                .GroupBy(m => (m.Coords.Season, m.Coords.Episode))
+                .ToDictionary(g => g.Key, g => g.Count());
+
+            int maxEpNum = fileData.Mappings.Where(m => m.Coords.Season >= 0).DefaultIfEmpty().Max(m => m?.Coords.EndEpisode ?? m?.Coords.Episode ?? 1);
             int epPad = Math.Max(2, maxEpNum.ToString().Length);
+
+            var extraPadBySeason = fileData.Mappings
+                .Where(m => m.Coords.Season < 0)
+                .GroupBy(m => m.Coords.Season)
+                .ToDictionary(g => g.Key, g => g.Count() > 9 ? 2 : 1);
 
             foreach (var mapping in fileData.Mappings
                 .OrderBy(m => m.Coords.Season)
@@ -169,7 +168,7 @@ namespace ShokoRelay.Meta
                 }
 
                 string importFolderNameRaw = location.ImportFolder?.Name ?? "ImportFolder";
-                string importFolderSafe = SanitizeName(importFolderNameRaw);
+                string importFolderSafe = VfsHelper.SanitizeName(importFolderNameRaw);
 
                 if (location.ImportFolder?.DropFolderType == DropFolderType.Source)
                 {
@@ -248,8 +247,8 @@ namespace ShokoRelay.Meta
                         report.AppendLine(seriesDirKey);
                 }
 
-                bool isSpecial = SpecialSeasons.TryGetValue(mapping.Coords.Season, out var specialInfo);
-                string seasonFolder = SanitizeName(isSpecial ? specialInfo.Folder : $"Season {mapping.Coords.Season}");
+                bool isExtra = PlexMapping.TryGetExtraSeason(mapping.Coords.Season, out var specialInfo);
+                string seasonFolder = VfsHelper.SanitizeName(PlexMapping.GetSeasonFolderName(mapping.Coords.Season));
                 string seasonPath = Path.Combine(seriesPath, seasonFolder);
                 string seasonDirKey = $"/{importFolderSafe}/{rootFolderName}/{seriesFolder}/{seasonFolder}";
                 if (!dryRun)
@@ -258,11 +257,21 @@ namespace ShokoRelay.Meta
                     report.AppendLine(seasonDirKey);
 
                 string extension = Path.GetExtension(source) ?? string.Empty;
-                string fileName = isSpecial
-                    ? BuildSpecialFileName(mapping, specialInfo, epPad, extension, titles.DisplayTitle, fileId)
-                    : BuildStandardFileName(mapping, epPad, extension, fileId);
+                int padForExtra = 1;
+                if (isExtra && extraPadBySeason.TryGetValue(mapping.Coords.Season, out var padLookup))
+                    padForExtra = padLookup;
 
-                fileName = SanitizeName(fileName);
+                var coordKey = (mapping.Coords.Season, mapping.Coords.Episode);
+                bool hasPeer = coordCounts.TryGetValue(coordKey, out var coordCount) && coordCount > 1;
+
+                int? effectivePartIndex = hasPeer ? mapping.PartIndex : null;
+                int effectivePartCount = hasPeer ? mapping.PartCount : 1;
+
+                string fileName = isExtra
+                    ? VfsHelper.BuildExtrasFileName(mapping, specialInfo, padForExtra, extension, titles.DisplayTitle, fileId, effectivePartIndex, effectivePartCount)
+                    : VfsHelper.BuildStandardFileName(mapping, epPad, extension, fileId, effectivePartIndex, effectivePartCount);
+
+                fileName = VfsHelper.SanitizeName(fileName);
                 string destPath = Path.Combine(seasonPath, fileName);
                 string destBase = Path.GetFileNameWithoutExtension(destPath);
                 string sourceDir = Path.GetDirectoryName(source) ?? string.Empty;
@@ -271,7 +280,7 @@ namespace ShokoRelay.Meta
                 {
                     planned++;
                     report.AppendLine($"/{importFolderSafe}/{rootFolderName}/{seriesFolder}/{seasonFolder}/{fileName} <- {source}");
-                    LinkMetadata(sourceDir, seasonPath, reportedDirs, dryRun, report);
+                    LinkMetadata(sourceDir, seriesPath, reportedDirs, dryRun, report);
                     LinkSubtitles(source, sourceDir, destBase, seasonPath, reportedDirs, dryRun, report, ref planned, ref skipped, errors);
                 }
                 else
@@ -280,7 +289,7 @@ namespace ShokoRelay.Meta
                     {
                         created++;
                         planned++;
-                        LinkMetadata(sourceDir, seasonPath, reportedDirs, dryRun, report);
+                        LinkMetadata(sourceDir, seriesPath, reportedDirs, dryRun, report);
                         LinkSubtitles(source, sourceDir, destBase, seasonPath, reportedDirs, dryRun, report, ref planned, ref skipped, errors);
                     }
                     else
@@ -292,35 +301,6 @@ namespace ShokoRelay.Meta
             }
 
             return (created, skipped, errors, planned);
-        }
-
-        private string BuildSpecialFileName(MapHelper.FileMapping mapping, (string Folder, string Prefix) specialInfo, int pad, string extension, string displaySeriesTitle, int fileId)
-        {
-            string epPart = mapping.Coords.Episode.ToString($"D{pad}");
-            string part = mapping.PartCount > 1 && mapping.PartIndex.HasValue ? $"-pt{mapping.PartIndex.Value}" : string.Empty;
-
-            string epTitle = TextHelper.ResolveEpisodeTitle(mapping.PrimaryEpisode, displaySeriesTitle);
-            epTitle = SanitizeName(epTitle);
-            string fileIdPart = $"[{fileId}]";
-
-            return $"{fileIdPart} {epTitle} - {epPart}{part}{extension}";
-        }
-
-        private string BuildStandardFileName(MapHelper.FileMapping mapping, int pad, string extension, int fileId)
-        {
-            string epPart = $"S{mapping.Coords.Season:D2}E{mapping.Coords.Episode.ToString($"D{pad}")}";
-            if (mapping.Coords.EndEpisode.HasValue && mapping.Coords.EndEpisode.Value != mapping.Coords.Episode)
-            {
-                epPart += $"-{mapping.Coords.EndEpisode.Value.ToString($"D{pad}")}";
-            }
-
-            if (mapping.PartCount > 1 && mapping.PartIndex.HasValue)
-            {
-                epPart += $"-pt{mapping.PartIndex.Value}";
-            }
-
-            string fileIdPart = $"[{fileId}]";
-            return $"{fileIdPart} - {epPart}{extension}";
         }
 
         private string? ResolveImportRootPath(Shoko.Plugin.Abstractions.DataModels.IVideoFile location)
@@ -477,7 +457,7 @@ namespace ShokoRelay.Meta
             if (string.IsNullOrWhiteSpace(configured))
                 configured = DefaultRootName;
 
-            configured = SanitizeName(configured);
+            configured = VfsHelper.SanitizeName(configured);
 
             return string.IsNullOrWhiteSpace(configured) ? DefaultRootName : configured;
         }
@@ -568,23 +548,5 @@ namespace ShokoRelay.Meta
             return !string.Equals(full, root, StringComparison.OrdinalIgnoreCase);
         }
 
-        private static string SanitizeName(string name)
-        {
-            if (string.IsNullOrWhiteSpace(name)) return "Unknown";
-
-            var invalid = Path.GetInvalidFileNameChars();
-            var sb = new StringBuilder(name.Length);
-
-            foreach (char c in name)
-            {
-                sb.Append(invalid.Contains(c) ? ' ' : c);
-            }
-
-            string cleaned = sb.ToString();
-            while (cleaned.Contains("  ")) cleaned = cleaned.Replace("  ", " ");
-            cleaned = cleaned.Trim().TrimEnd('.');
-
-            return cleaned.Length == 0 ? "Unknown" : cleaned;
-        }
     }
 }

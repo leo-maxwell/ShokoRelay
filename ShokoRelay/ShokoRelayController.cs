@@ -310,7 +310,7 @@ namespace ShokoRelay.Controllers
                 return Ok(new
                 {
                     status = "skipped",
-                    message = "Set run=true to build the VFS.",
+                    message = "Set run=true to build the VFS -OR- dryRun=true to simulate without making changes",
                     seriesId,
                     clean,
                     dryRun
@@ -361,9 +361,18 @@ namespace ShokoRelay.Controllers
             var name = Path.GetFileName(rawPath);
             if (string.IsNullOrWhiteSpace(name)) return null;
 
-            var match = Regex.Match(name, "\\[(\\d+)\\]");
-            if (match.Success && int.TryParse(match.Groups[1].Value, out var id))
-                return id;
+            // Prefer the final [id] segment right before the extension
+            var specific = Regex.Match(name, "\\[(\\d+)\\](?=\\.[^.]+$)");
+            if (specific.Success && int.TryParse(specific.Groups[1].Value, out var idSpecific))
+                return idSpecific;
+
+            // Fallback: last bracketed number anywhere
+            var matches = Regex.Matches(name, "\\[(\\d+)\\]");
+            for (int i = matches.Count - 1; i >= 0; i--)
+            {
+                if (int.TryParse(matches[i].Groups[1].Value, out var id))
+                    return id;
+            }
 
             return null;
         }

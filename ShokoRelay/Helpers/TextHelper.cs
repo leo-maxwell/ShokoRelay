@@ -1,6 +1,7 @@
 using Shoko.Plugin.Abstractions.DataModels;
 using Shoko.Plugin.Abstractions.DataModels.Shoko;
 using ShokoRelay.Config;
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace ShokoRelay.Helpers
@@ -28,10 +29,32 @@ namespace ShokoRelay.Helpers
         private static readonly Regex _bbCodeSolitaryRegex               = new(@"\[\/?i\]", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly Regex _condenseLinesRegex                = new(@"(\r?\n\s*){2,}", RegexOptions.Compiled);
         private static readonly Regex _condenseSpacesRegex               = new(@"\s{2,}", RegexOptions.Compiled);
+        private static readonly Regex _quotedTextRegex                   = new("\"(.*?)\"", RegexOptions.Compiled);
         private static readonly HashSet<string> _ambiguousTitles         = new(["Complete Movie", "Music Video", "OAD", "OVA", "Short Movie", "Special", "TV Special", "Web"], StringComparer.OrdinalIgnoreCase);
         private static readonly HashSet<string> _forceLower              = new(["a", "an", "the", "and", "but", "or", "nor", "at", "by", "for", "from", "in", "into", "of", "off", "on", "onto", "out", "over", "per", "to", "up", "with", "as", "4-koma", "-hime", "-kei", "-kousai", "-sama", "-warashi", "no", "vs", "x"], StringComparer.OrdinalIgnoreCase);
         private static readonly HashSet<string> _forceUpper              = new(["3d", "bdsm", "cg", "cgi", "ed", "fff", "ffm", "ii", "milf", "mmf", "mmm", "npc", "op", "rpg", "tbs", "tv"], StringComparer.OrdinalIgnoreCase);
         private static readonly Dictionary<string, string> _forceSpecial = new(new Dictionary<string, string> { { "comicfesta", "ComicFesta" }, { "d'etat", "d'Etat" }, { "noitamina", "noitaminA" } }, StringComparer.OrdinalIgnoreCase);
+        private static readonly (string Find, string Replace)[] _styledTitleReplacements =
+        {
+            ("1/2", "½"),
+            ("1/6", "⅙"),
+            ("-->", "→"),
+            ("<--", "←"),
+            ("->", "→"),
+            ("<-", "←")
+        };
+
+        private static readonly IReadOnlyDictionary<char, char> _filenameCharMap = new Dictionary<char, char>
+        {
+            ['\\'] = '⧵',
+            ['/'] = '⁄',
+            [':'] = '꞉',
+            ['*'] = '＊',
+            ['?'] = '？',
+            ['<'] = '＜',
+            ['>'] = '＞',
+            ['|'] = '｜'
+        };
 
         public static object[] GetFilteredTags(ISeries series)
         {
@@ -222,6 +245,36 @@ namespace ShokoRelay.Helpers
             });
 
             return result;
+        }
+
+        public static string CleanEpisodeTitleForFilename(string? title)
+        {
+            if (string.IsNullOrWhiteSpace(title)) return string.Empty;
+
+            string cleaned = title;
+
+            foreach (var (find, replace) in _styledTitleReplacements)
+            {
+                cleaned = cleaned.Replace(find, replace, StringComparison.Ordinal);
+            }
+
+            cleaned = _quotedTextRegex.Replace(cleaned, "“$1”");
+
+            var sb = new StringBuilder(cleaned.Length);
+            foreach (char c in cleaned)
+            {
+                if (_filenameCharMap.TryGetValue(c, out var mapped))
+                {
+                    sb.Append(mapped);
+                }
+                else
+                {
+                    sb.Append(c);
+                }
+            }
+
+            cleaned = Regex.Replace(sb.ToString(), "\\s+", " ", RegexOptions.Compiled).Trim();
+            return cleaned;
         }
     }
 }

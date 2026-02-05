@@ -92,5 +92,12 @@ namespace ShokoRelay.Config
         [Display(Name = "Library Mode", Description = "Choose VFS links or no automation.")]
         [DefaultValue(RelayMode.Vfs)]
         public RelayMode Mode { get; set; } = RelayMode.Vfs;
+
+        [Display(Name = "Crossover Overrides", Description = "Key=AniDB Episode ID, Value=AniDB Series ID to force map crossovers.")]
+        public Dictionary<int, int> CrossoverOverrides { get; set; } = new()
+        {
+            { 146131, 8142 },
+            { 147453, 69 }
+        };
     }
 }

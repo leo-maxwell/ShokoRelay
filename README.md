@@ -5,7 +5,7 @@ This is a plugin for Shoko Server that acts as a [Custom Metadata Provider](http
 It is a successor to the [ShokoRelay.bundle](https://github.com/natyusha/ShokoRelay.bundle) legacy agent/scanner and intends to mirror all of its functionality. Scanning is much faster and it will be possible to add many new features as well.
 
 Due to the lack of a custom scanner this plugin leverages a VFS (Virtual File Sytem) to ensure that varied folder structures are supported.
-This means that your anime can be organised with whatever file or folder structure you want. The only caveat is that a folder cannot contain more than one AniDB series at a time if you want it to correctly support local metadata like `Theme.mp3`. The VFS will be automatically updated when a file move or rename is detected by Shoko.
+This means that your anime can be organised with whatever file or folder structure you want. The only caveat is that a folder cannot contain more than one AniDB series at a time if you want it to correctly support [local media assets](https://support.plex.tv/articles/200220717-local-media-assets-tv-shows/) like `Theme.mp3`. The VFS will be automatically updated when a file move or rename is detected by Shoko.
 
 ## Installation
 ### Shoko
@@ -25,6 +25,7 @@ This means that your anime can be organised with whatever file or folder structu
 
 #### VFS
 - Once the Server has loaded navigate to `http://ShokoHost:ShokoPort/api/v3/ShokoRelay/vfs?run=true` to generate the VFS.
+- First time generation may take a couple minutes to complete with a large library.
 - It will automatically update when it detects files have been renamed or moved.
 
 > [!TIP]

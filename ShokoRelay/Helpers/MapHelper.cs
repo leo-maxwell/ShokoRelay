@@ -1,5 +1,6 @@
 using Shoko.Plugin.Abstractions.DataModels;
 using Shoko.Plugin.Abstractions.DataModels.Shoko;
+using Shoko.Plugin.Abstractions.Enums;
 using static ShokoRelay.Meta.PlexMapping;
 
 namespace ShokoRelay.Helpers
@@ -41,6 +42,7 @@ namespace ShokoRelay.Helpers
             var seriesEpisodes = series.Episodes
                 .Select(e => (Episode: e, Videos: e.VideoList.ToList()))
                 .Where(x => x.Videos.Count > 0 && !IsHidden(x.Episode))
+                .Where(x => !IsCrossoverOverride(series, x.Episode))
                 .ToList();
 
             if (seriesEpisodes.Count == 0) return result;
@@ -100,19 +102,39 @@ namespace ShokoRelay.Helpers
                     prevType = epType;
                 }
 
-                if (filteredEps.Count == 0) continue;
+                // Deduplicate identical season/episode coordinates within the same file
+                var deduped = new List<(IEpisode Episode, PlexCoords Coords)>();
+                var seenCoords = new HashSet<(int Season, int Episode)>();
+                foreach (var entry in filteredEps)
+                {
+                    var key = (entry.Coords.Season, entry.Coords.Episode);
+                    if (!seenCoords.Add(key))
+                        continue;
+                    deduped.Add(entry);
+                }
 
-                var (firstEp, _) = filteredEps[0];
+                if (deduped.Count == 0) continue;
+
+                var (firstEp, _) = deduped[0];
                 var epId = firstEp.ID;
-                var episodes = filteredEps.Select(x => x.Episode).ToList();
+                var episodes = deduped.Select(x => x.Episode).ToList();
 
                 int fileIndex = episodeFileLists.TryGetValue(epId, out var files) ? files.FindIndex(x => x.ID == video.ID) : 0;
                 int fileCount = files?.Count ?? 1;
-                int? fileIndexParam = fileCount > 1 ? fileIndex : null;
+
+                bool allowPartSuffix = false;
+                if (fileCount > 1)
+                {
+                    var nonCreditTypes = deduped.Select(d => d.Episode.Type).Where(t => t != EpisodeType.Credits).Distinct().ToList();
+                    allowPartSuffix = nonCreditTypes.Count <= 1;
+                }
+
+                int? fileIndexParam = allowPartSuffix && fileCount > 1 ? fileIndex : null;
 
                 var coords = GetPlexCoordinatesForFile(episodes, fileIndexParam);
                 var fileName = Path.GetFileName(video.Locations.FirstOrDefault()?.Path ?? "");
-                int? partIndex = fileCount > 1 ? fileIndex + 1 : null;
+                int? partIndex = allowPartSuffix && fileCount > 1 ? fileIndex + 1 : null;
+                int partCount = allowPartSuffix ? fileCount : 1;
 
                 object? tmdbEpisode = null;
                 if (fileCount > 1 && ShokoRelay.Settings.TMDBStructure && firstEp is IShokoEpisode shokoEp && shokoEp.TmdbEpisodes?.Any() == true)
@@ -126,7 +148,7 @@ namespace ShokoRelay.Helpers
                         tmdbEpisode = tmdbEps[fileIndex];
                 }
 
-                result.Add(new FileMapping(video, episodes, firstEp, coords, fileName, partIndex, fileCount, tmdbEpisode));
+                result.Add(new FileMapping(video, episodes, firstEp, coords, fileName, partIndex, partCount, tmdbEpisode));
             }
 
             return result;
@@ -134,5 +156,13 @@ namespace ShokoRelay.Helpers
 
         public static bool IsHidden(IEpisode e) { return e is IShokoEpisode shokoEp && shokoEp.IsHidden;}
         private static string GetEpisodeTypeString(IEpisode ep) { return ep.Type.ToString(); }
+        private static bool IsCrossoverOverride(ISeries series, IEpisode episode)
+        {
+            if (episode is not IShokoEpisode shokoEp) return false;
+            var overrides = ShokoRelay.Settings.CrossoverOverrides;
+            if (overrides == null || overrides.Count == 0) return false;
+
+            return overrides.TryGetValue(shokoEp.AnidbEpisodeID, out var targetSeriesId) && targetSeriesId != series.ID;
+        }
     }
 }
