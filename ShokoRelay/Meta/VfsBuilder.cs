@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using System.Text;
 using NLog;
 using Shoko.Plugin.Abstractions;
@@ -9,34 +8,19 @@ using ShokoRelay.Helpers;
 
 namespace ShokoRelay.Meta
 {
-    public record VfsBuildResult(
-        string RootPath,
-        int SeriesProcessed,
-        int CreatedLinks,
-        int Skipped,
-        List<string> Errors,
-        bool DryRun,
-        int PlannedLinks,
-        string? ReportPath,
-        string? ReportContent);
+    public record VfsBuildResult(string RootPath, int SeriesProcessed, int CreatedLinks, int Skipped, List<string> Errors, bool DryRun, int PlannedLinks, string? ReportPath, string? ReportContent);
 
     public class VfsBuilder
     {
         private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
-        private const string DefaultRootName = "!ShokoRelayVFS";
-
         private readonly IMetadataService _metadataService;
         private readonly string _programDataPath;
 
-        private static readonly HashSet<string> MetadataExtensions = new(StringComparer.OrdinalIgnoreCase)
-        {
-            ".bmp", ".gif", ".jpe", ".jpeg", ".jpg", ".png", ".tbn", ".tif", ".tiff", ".webp", ".mp3"
-        };
+        private static readonly HashSet<string> MetadataExtensions = PlexConstants
+            .LocalMediaAssets.Artwork.Union(PlexConstants.LocalMediaAssets.ThemeSongs)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        private static readonly HashSet<string> SubtitleExtensions = new(StringComparer.OrdinalIgnoreCase)
-        {
-            ".srt", ".smi", ".ssa", ".ass", ".vtt"
-        };
+        private static readonly HashSet<string> SubtitleExtensions = PlexConstants.LocalMediaAssets.Subtitles;
 
         public VfsBuilder(IMetadataService metadataService, IApplicationPaths applicationPaths)
         {
@@ -54,7 +38,7 @@ namespace ShokoRelay.Meta
 
             var report = new StringBuilder();
 
-            string rootName = ResolveRootFolderName();
+            string rootName = VfsShared.ResolveRootFolderName();
             var cleanedRoots = new HashSet<string>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
 
             if (dryRun)
@@ -83,7 +67,8 @@ namespace ShokoRelay.Meta
 
             foreach (var series in seriesList)
             {
-                if (series == null) continue;
+                if (series == null)
+                    continue;
 
                 try
                 {
@@ -125,7 +110,8 @@ namespace ShokoRelay.Meta
             bool cleanRoot,
             bool dryRun,
             HashSet<string> cleanedRoots,
-            StringBuilder report)
+            StringBuilder report
+        )
         {
             int created = 0;
             int skipped = 0;
@@ -142,22 +128,16 @@ namespace ShokoRelay.Meta
                 return (0, 0, errors, 0);
             }
 
-            var coordCounts = fileData.Mappings
-                .GroupBy(m => (m.Coords.Season, m.Coords.Episode))
-                .ToDictionary(g => g.Key, g => g.Count());
+            var coordCounts = fileData.Mappings.GroupBy(m => (m.Coords.Season, m.Coords.Episode)).ToDictionary(g => g.Key, g => g.Count());
+
+            var versionCounters = fileData.Mappings.GroupBy(m => (m.Coords.Season, m.Coords.Episode)).Where(g => g.Count() > 1).ToDictionary(g => g.Key, _ => 1);
 
             int maxEpNum = fileData.Mappings.Where(m => m.Coords.Season >= 0).DefaultIfEmpty().Max(m => m?.Coords.EndEpisode ?? m?.Coords.Episode ?? 1);
             int epPad = Math.Max(2, maxEpNum.ToString().Length);
 
-            var extraPadBySeason = fileData.Mappings
-                .Where(m => m.Coords.Season < 0)
-                .GroupBy(m => m.Coords.Season)
-                .ToDictionary(g => g.Key, g => g.Count() > 9 ? 2 : 1);
+            var extraPadBySeason = fileData.Mappings.Where(m => m.Coords.Season < 0).GroupBy(m => m.Coords.Season).ToDictionary(g => g.Key, g => g.Count() > 9 ? 2 : 1);
 
-            foreach (var mapping in fileData.Mappings
-                .OrderBy(m => m.Coords.Season)
-                .ThenBy(m => m.Coords.Episode)
-                .ThenBy(m => m.PartIndex ?? 0))
+            foreach (var mapping in fileData.Mappings.OrderBy(m => m.Coords.Season).ThenBy(m => m.Coords.Episode).ThenBy(m => m.PartIndex ?? 0))
             {
                 var location = mapping.Video.Locations.FirstOrDefault(l => File.Exists(l.Path)) ?? mapping.Video.Locations.FirstOrDefault();
                 if (location == null)
@@ -177,7 +157,7 @@ namespace ShokoRelay.Meta
                     continue;
                 }
 
-                string? importRoot = ResolveImportRootPath(location);
+                string? importRoot = VfsShared.ResolveImportRootPath(location);
                 if (string.IsNullOrWhiteSpace(importRoot))
                 {
                     skipped++;
@@ -267,9 +247,16 @@ namespace ShokoRelay.Meta
                 int? effectivePartIndex = hasPeer ? mapping.PartIndex : null;
                 int effectivePartCount = hasPeer ? mapping.PartCount : 1;
 
+                int? versionIndex = null;
+                if (hasPeer && !effectivePartIndex.HasValue && versionCounters.TryGetValue(coordKey, out var nextVersion))
+                {
+                    versionIndex = nextVersion;
+                    versionCounters[coordKey] = nextVersion + 1;
+                }
+
                 string fileName = isExtra
-                    ? VfsHelper.BuildExtrasFileName(mapping, specialInfo, padForExtra, extension, titles.DisplayTitle, fileId, effectivePartIndex, effectivePartCount)
-                    : VfsHelper.BuildStandardFileName(mapping, epPad, extension, fileId, effectivePartIndex, effectivePartCount);
+                    ? VfsHelper.BuildExtrasFileName(mapping, specialInfo, padForExtra, extension, titles.DisplayTitle, fileId, effectivePartIndex, effectivePartCount, versionIndex)
+                    : VfsHelper.BuildStandardFileName(mapping, epPad, extension, fileId, effectivePartIndex, effectivePartCount, versionIndex);
 
                 fileName = VfsHelper.SanitizeName(fileName);
                 string destPath = Path.Combine(seasonPath, fileName);
@@ -285,7 +272,7 @@ namespace ShokoRelay.Meta
                 }
                 else
                 {
-                    if (TryCreateLink(source, destPath))
+                    if (VfsShared.TryCreateLink(source, destPath, Logger))
                     {
                         created++;
                         planned++;
@@ -303,36 +290,6 @@ namespace ShokoRelay.Meta
             return (created, skipped, errors, planned);
         }
 
-        private string? ResolveImportRootPath(Shoko.Plugin.Abstractions.DataModels.IVideoFile location)
-        {
-            string path = location.Path;
-            if (string.IsNullOrWhiteSpace(path)) return null;
-
-            string normalizedPath = NormalizeSeparators(path);
-            string relative = location.RelativePath?.TrimStart('/', '\\') ?? string.Empty;
-            if (!string.IsNullOrWhiteSpace(relative))
-            {
-                string normalizedRel = NormalizeSeparators(relative);
-                var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-                if (normalizedPath.EndsWith(normalizedRel, comparison))
-                {
-                    string root = normalizedPath.Substring(0, normalizedPath.Length - normalizedRel.Length)
-                        .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-                    if (!string.IsNullOrWhiteSpace(root))
-                        return root;
-                }
-            }
-
-            string? dir = Path.GetDirectoryName(normalizedPath);
-            if (string.IsNullOrWhiteSpace(dir)) return null;
-            return dir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        }
-
-        private static string NormalizeSeparators(string path)
-        {
-            return path.Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar);
-        }
-
         private string? ResolveSourcePath(Shoko.Plugin.Abstractions.DataModels.IVideoFile location, string importRoot)
         {
             string original = location.Path;
@@ -342,7 +299,7 @@ namespace ShokoRelay.Meta
             string relative = location.RelativePath?.TrimStart('/', '\\') ?? string.Empty;
             if (!string.IsNullOrWhiteSpace(relative))
             {
-                string candidate = Path.Combine(importRoot, NormalizeSeparators(relative));
+                string candidate = Path.Combine(importRoot, VfsShared.NormalizeSeparators(relative));
                 if (File.Exists(candidate))
                     return candidate;
             }
@@ -352,15 +309,18 @@ namespace ShokoRelay.Meta
 
         private void LinkMetadata(string sourceDir, string destDir, HashSet<string> reportedDirs, bool dryRun, StringBuilder report)
         {
-            if (string.IsNullOrWhiteSpace(sourceDir) || !Directory.Exists(sourceDir)) return;
+            if (string.IsNullOrWhiteSpace(sourceDir) || !Directory.Exists(sourceDir))
+                return;
 
             string dirKey = $"meta::{sourceDir}->{destDir}";
-            if (!reportedDirs.Add(dirKey)) return;
+            if (!reportedDirs.Add(dirKey))
+                return;
 
             foreach (var file in Directory.EnumerateFiles(sourceDir))
             {
                 string ext = Path.GetExtension(file);
-                if (!MetadataExtensions.Contains(ext)) continue;
+                if (!MetadataExtensions.Contains(ext))
+                    continue;
 
                 string name = Path.GetFileName(file);
                 string destPath = Path.Combine(destDir, name);
@@ -371,7 +331,7 @@ namespace ShokoRelay.Meta
                     continue;
                 }
 
-                TryCreateLink(file, destPath);
+                VfsShared.TryCreateLink(file, destPath, Logger);
             }
         }
 
@@ -386,11 +346,13 @@ namespace ShokoRelay.Meta
             {
                 foreach (var location in mapping.Video.Locations)
                 {
-                    string? importRoot = ResolveImportRootPath(location);
-                    if (string.IsNullOrWhiteSpace(importRoot)) continue;
+                    string? importRoot = VfsShared.ResolveImportRootPath(location);
+                    if (string.IsNullOrWhiteSpace(importRoot))
+                        continue;
 
                     string seriesPath = Path.Combine(importRoot, rootFolderName, seriesFolder);
-                    if (!seriesPaths.Add(seriesPath)) continue;
+                    if (!seriesPaths.Add(seriesPath))
+                        continue;
 
                     try
                     {
@@ -405,18 +367,32 @@ namespace ShokoRelay.Meta
             }
         }
 
-        private void LinkSubtitles(string sourceFile, string sourceDir, string destBaseName, string destDir, HashSet<string> reportedDirs, bool dryRun, StringBuilder report, ref int planned, ref int skipped, List<string> errors)
+        private void LinkSubtitles(
+            string sourceFile,
+            string sourceDir,
+            string destBaseName,
+            string destDir,
+            HashSet<string> reportedDirs,
+            bool dryRun,
+            StringBuilder report,
+            ref int planned,
+            ref int skipped,
+            List<string> errors
+        )
         {
-            if (string.IsNullOrWhiteSpace(sourceDir) || !Directory.Exists(sourceDir)) return;
+            if (string.IsNullOrWhiteSpace(sourceDir) || !Directory.Exists(sourceDir))
+                return;
 
             string originalBase = Path.GetFileNameWithoutExtension(sourceFile);
             foreach (var sub in Directory.EnumerateFiles(sourceDir))
             {
                 string ext = Path.GetExtension(sub);
-                if (!SubtitleExtensions.Contains(ext)) continue;
+                if (!SubtitleExtensions.Contains(ext))
+                    continue;
 
                 string name = Path.GetFileName(sub);
-                if (!name.StartsWith(originalBase, StringComparison.OrdinalIgnoreCase)) continue;
+                if (!name.StartsWith(originalBase, StringComparison.OrdinalIgnoreCase))
+                    continue;
 
                 string suffix = name.Substring(originalBase.Length);
                 string destName = destBaseName + suffix;
@@ -429,7 +405,7 @@ namespace ShokoRelay.Meta
                     continue;
                 }
 
-                if (TryCreateLink(sub, destPath))
+                if (VfsShared.TryCreateLink(sub, destPath, Logger))
                 {
                     planned++;
                 }
@@ -441,112 +417,15 @@ namespace ShokoRelay.Meta
             }
         }
 
-        private string ResolveRootFolderName()
-        {
-            string configured = ShokoRelay.Settings.VfsRootPath;
-            if (string.IsNullOrWhiteSpace(configured))
-                configured = DefaultRootName;
-
-            configured = configured.Trim().TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-
-            if (Path.IsPathRooted(configured))
-            {
-                configured = Path.GetFileName(configured);
-            }
-
-            if (string.IsNullOrWhiteSpace(configured))
-                configured = DefaultRootName;
-
-            configured = VfsHelper.SanitizeName(configured);
-
-            return string.IsNullOrWhiteSpace(configured) ? DefaultRootName : configured;
-        }
-
-        private static bool TryCreateLink(string source, string dest)
-        {
-            try
-            {
-                if (File.Exists(dest))
-                    File.Delete(dest);
-            }
-            catch (Exception ex)
-            {
-                Logger.Warn(ex, "Unable to remove existing link at {Dest}", dest);
-                return false;
-            }
-
-            string linkDir = Path.GetDirectoryName(dest) ?? string.Empty;
-            string relativeTarget = string.IsNullOrWhiteSpace(linkDir)
-                ? source
-                : Path.GetRelativePath(linkDir, source);
-
-            if (OperatingSystem.IsWindows())
-            {
-                // Prefer symlink for clarity; fall back to hardlink if symlink creation is blocked
-                if (TryCreateSymlink(dest, relativeTarget)) return true;
-                if (TryCreateHardLink(dest, source)) return true;
-            }
-            else
-            {
-                if (TryCreateSymlink(dest, relativeTarget)) return true;
-                if (TryCreateHardLink(dest, source)) return true;
-            }
-
-            return false;
-        }
-
-        private static bool TryCreateSymlink(string linkPath, string target)
-        {
-            try
-            {
-                var info = File.CreateSymbolicLink(linkPath, target);
-                return info.Exists;
-            }
-            catch (Exception ex)
-            {
-                Logger.Debug(ex, "Symlink creation failed for {Link}", linkPath);
-                return false;
-            }
-        }
-
-        private static bool TryCreateHardLink(string linkPath, string target)
-        {
-            try
-            {
-                if (OperatingSystem.IsWindows())
-                {
-                    // Windows Kernel32 CreateHardLink
-                    if (CreateHardLinkW(linkPath, target, IntPtr.Zero))
-                        return File.Exists(linkPath);
-                    return false;
-                }
-
-                // POSIX link()
-                int res = link(target, linkPath);
-                return res == 0 && File.Exists(linkPath);
-            }
-            catch (Exception ex)
-            {
-                Logger.Debug(ex, "Hardlink creation failed for {Link}", linkPath);
-                return false;
-            }
-        }
-
-        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-        private static extern bool CreateHardLinkW(string lpFileName, string lpExistingFileName, IntPtr lpSecurityAttributes);
-
-        [DllImport("libc", SetLastError = true)]
-        private static extern int link(string oldpath, string newpath);
-
         private static bool IsSafeToDelete(string path)
         {
-            if (string.IsNullOrWhiteSpace(path)) return false;
+            if (string.IsNullOrWhiteSpace(path))
+                return false;
 
             string full = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
             string? root = Path.GetPathRoot(full)?.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
             return !string.Equals(full, root, StringComparison.OrdinalIgnoreCase);
         }
-
     }
 }

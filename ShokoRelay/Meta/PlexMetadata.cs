@@ -10,32 +10,34 @@ namespace ShokoRelay.Meta
     public class PlexMetadata
     {
         private readonly IMetadataService _metadataService;
-        private const string SeasonPre  = "s";
-        private const string EpisodePre = "e";
-        private const string PartPre    = "p";
 
         public PlexMetadata(IMetadataService metadataService)
         {
             _metadataService = metadataService;
         }
 
-        public string GetRatingKey(string type, int id, int? season = null, int? part = null) => type switch
-        {
-            "show"    => id.ToString(),
-            "season"  => $"{id}{SeasonPre}{season}",
-            "episode" => part.HasValue ? $"{EpisodePre}{id}{PartPre}{part}" : $"{EpisodePre}{id}",
-            _         => id.ToString()
-        };
+        public string GetRatingKey(string type, int id, int? season = null, int? part = null) =>
+            type switch
+            {
+                "collection" => $"{PlexConstants.CollectionPrefix}{id}",
+                "show" => id.ToString(),
+                "season" => $"{id}{PlexConstants.SeasonPrefix}{season}",
+                "episode" => part.HasValue ? $"{PlexConstants.EpisodePrefix}{id}{PlexConstants.PartPrefix}{part}" : $"{PlexConstants.EpisodePrefix}{id}",
+                _ => id.ToString(),
+            };
 
-        public string GetGuid(string type, int id, int? season = null, int? part = null) => type switch
-        {
-            "show"    => $"{ShokoRelayInfo.AgentScheme}://show/{id}",
-            "season"  => $"{ShokoRelayInfo.AgentScheme}://season/{id}{SeasonPre}{season}",
-            "episode" => part.HasValue 
-                         ? $"{ShokoRelayInfo.AgentScheme}://episode/{EpisodePre}{id}{PartPre}{part}" 
-                         : $"{ShokoRelayInfo.AgentScheme}://episode/{EpisodePre}{id}",
-            _         => $"{ShokoRelayInfo.AgentScheme}://{id}"
-        };
+        public string GetGuid(string type, int id, int? season = null, int? part = null) =>
+            type switch
+            {
+                "collection" => $"{ShokoRelayInfo.AgentScheme}://collections/{id}",
+                "show" => $"{ShokoRelayInfo.AgentScheme}://show/{id}",
+                "season" => $"{ShokoRelayInfo.AgentScheme}://season/{id}{PlexConstants.SeasonPrefix}{season}",
+                "episode" => part.HasValue
+                    ? $"{ShokoRelayInfo.AgentScheme}://episode/{PlexConstants.EpisodePrefix}{id}{PlexConstants.PartPrefix}{part}"
+                    : $"{ShokoRelayInfo.AgentScheme}://episode/{PlexConstants.EpisodePrefix}{id}",
+                _ => $"{ShokoRelayInfo.AgentScheme}://{id}",
+            };
+
         private object[] BuildTmdbGuidArray(ISeries series)
         {
             var guids = new List<object>();
@@ -53,6 +55,23 @@ namespace ShokoRelay.Meta
 
             return guids.ToArray();
         }
+
+        private object? BuildTmdbRatingArray(double rating)
+        {
+            if (rating <= 0)
+                return null;
+
+            return new[]
+            {
+                new
+                {
+                    image = "themoviedb://image.rating",
+                    type = "audience",
+                    value = (float)rating,
+                },
+            };
+        }
+
         private string? GetCollectionName(ISeries series)
         {
             if (series is not IShokoSeries shokoSeries)
@@ -69,22 +88,45 @@ namespace ShokoRelay.Meta
             if ((shokoGroup.Series?.Count ?? 0) <= 1)
                 return null;
 
-            return group is IWithTitles titled && !string.IsNullOrWhiteSpace(titled.PreferredTitle)
-                ? titled.PreferredTitle
-                : null;
+            return group is IWithTitles titled && !string.IsNullOrWhiteSpace(titled.PreferredTitle) ? titled.PreferredTitle : null;
+        }
+
+        public Dictionary<string, object?> MapCollection(IShokoGroup group, ISeries primarySeries)
+        {
+            var images = (IWithImages)primarySeries;
+            var poster = images?.GetImages(ImageEntityType.Poster).FirstOrDefault();
+            var backdrop = images?.GetImages(ImageEntityType.Backdrop).FirstOrDefault();
+
+            string collectiontitle = group is IWithTitles titled && !string.IsNullOrWhiteSpace(titled.PreferredTitle) ? titled.PreferredTitle : $"Group {group.ID}";
+
+            string? summary = (group as IWithDescriptions)?.PreferredDescription;
+            // csharpier-ignore-start
+            return new Dictionary<string, object?>
+            {
+                ["ratingKey"]             = GetRatingKey("collection", group.ID),
+                ["guid"]                  = GetGuid("collection", group.ID),
+                ["key"]                   = $"/collection/{group.ID}",
+                ["type"]                  = "collection",
+                ["subtype"]               = "show",
+                ["title"]                 = collectiontitle,
+                ["thumb"]                 = poster != null ? ImageHelper.GetImageUrl(poster) : null,
+                ["art"]                   = backdrop != null ? ImageHelper.GetImageUrl(backdrop) : null,
+                ["titleSort"]             = collectiontitle,
+                //["summary"]             = there is no summary source for groups
+                //["Image"]               = Likely an image array will be used here
+            };
+            // csharpier-ignore-end
         }
 
         public Dictionary<string, object?> MapSeries(ISeries series, (string DisplayTitle, string SortTitle, string? OriginalTitle) titles)
         {
-            var images        = (IWithImages)series;
-            var poster        = images.GetImages(ImageEntityType.Poster).FirstOrDefault();
-            var backdrop      = images.GetImages(ImageEntityType.Backdrop).FirstOrDefault();
-            var studios       = CastHelper.GetStudioTags(series);
+            var images = (IWithImages)series;
+            var poster = images.GetImages(ImageEntityType.Poster).FirstOrDefault();
+            var backdrop = images.GetImages(ImageEntityType.Backdrop).FirstOrDefault();
+            var studios = CastHelper.GetStudioTags(series);
             var contentRating = RatingHelper.GetContentRatingAndAdult(series);
-            var totalDuration = series.Episodes.Any() 
-                ? (int)series.Episodes.Sum(e => e.Runtime.TotalMilliseconds) 
-                : (int?)null;
-
+            var totalDuration = series.Episodes.Any() ? (int)series.Episodes.Sum(e => e.Runtime.TotalMilliseconds) : (int?)null;
+            // csharpier-ignore-start
             return new Dictionary<string, object?>
             {
                 ["ratingKey"]             = GetRatingKey("show", series.ID),
@@ -108,7 +150,7 @@ namespace ShokoRelay.Meta
 
                 ["Image"]                 = ImageHelper.GenerateImageArray(images, titles.DisplayTitle, ShokoRelay.Settings.AddEveryImage),
                 //["OriginalImage"]       = Should be able to implement this but might make more sense to leave it to Shoko
-                ["Genre"]                 = TextHelper.GetFilteredTags(series),
+                ["Genre"]                 = TagHelper.GetFilteredTags(series),
                 ["Guid"]                  = BuildTmdbGuidArray(series).ToArray(),
                 //["Country"]             = TMDB has this but it is not exposed
                 ["Role"]                  = CastHelper.GetCastAndCrew(series),
@@ -117,28 +159,25 @@ namespace ShokoRelay.Meta
                 ["Writer"]                = CastHelper.GetWriters(series),
                 //["Similar]              = AniDB has this but it is not exposed
                 ["Studio"]                = studios,
-                ["Collection"]            = GetCollectionName(series) is string c ? new[] { new { tag = c } } : null // Not documented
-                //["Rating"]              = TMDB/AniDB has this but it is not exposed
+                ["Collection"]            = GetCollectionName(series) is string c ? new[] { new { tag = c } } : null, // Not documented
+                ["Rating"]                = BuildTmdbRatingArray(series.Rating),
                 //["Network"]             = TMDB has this but it is not exposed
                 //["SeasonType"]          = Can be implemented now but serves no purpose
             };
+            // csharpier-ignore-end
         }
 
         public Dictionary<string, object?> MapSeason(ISeries series, int seasonNum, string seriesTitle)
         {
             var images = (IWithImages)series;
-            var poster   = images.GetImages(ImageEntityType.Poster).FirstOrDefault();
+            var poster = images.GetImages(ImageEntityType.Poster).FirstOrDefault();
             var backdrop = images.GetImages(ImageEntityType.Backdrop).FirstOrDefault();
             var seasonTitle = GetSeasonTitle(seasonNum);
-            var firstEpisode = series.Episodes
-                .Select(e => new { Ep = e, Map = GetPlexCoordinates(e) })
-                .Where(x => x.Map.Season == seasonNum)
-                .OrderBy(x => x.Map.Episode)
-                .FirstOrDefault();
-
+            var firstEpisode = series.Episodes.Select(e => new { Ep = e, Map = GetPlexCoordinates(e) }).Where(x => x.Map.Season == seasonNum).OrderBy(x => x.Map.Episode).FirstOrDefault();
+            // csharpier-ignore-start
             return new Dictionary<string, object?>
             {
-                ["ratingKey"]             = GetRatingKey("season", series.ID, seasonNum),
+                ["ratingKey"] = GetRatingKey("season", series.ID, seasonNum),
                 ["key"]                   = $"/metadata/{GetRatingKey("season", series.ID, seasonNum)}/children",
                 ["guid"]                  = GetGuid("season", series.ID, seasonNum),
                 ["type"]                  = "season",
@@ -159,27 +198,32 @@ namespace ShokoRelay.Meta
                 ["parentThumb"]           = poster != null ? ImageHelper.GetImageUrl(poster) : null,
                 ["parentArt"]             = backdrop != null ? ImageHelper.GetImageUrl(backdrop) : null,
                 ["index"]                 = seasonNum,
-                
-                ["Image"]                 = ImageHelper.GenerateImageArray(images, seasonTitle, ShokoRelay.Settings.AddEveryImage)
-                                                .Where(img => img.type == "coverPoster") // Season poster from series images until season specific images are exposed
-                                                .ToArray(),
+
+                ["Image"] = ImageHelper
+                    .GenerateImageArray(images, seasonTitle, ShokoRelay.Settings.AddEveryImage)
+                    .Where(img => img.type == "coverPoster") // Season poster from series images until season specific images are exposed
+                    .ToArray(),
                 //["Guid"]                = Should be able to get TMDB season IDs
             };
+            // csharpier-ignore-end
         }
 
-        public Dictionary<string, object?> MapEpisode(IEpisode ep, PlexCoords mapped, ISeries series,
+        public Dictionary<string, object?> MapEpisode(
+            IEpisode ep,
+            PlexCoords mapped,
+            ISeries series,
             (string DisplayTitle, string SortTitle, string? OriginalTitle) titles,
-            int? partIndex = null, object? tmdbEpisode = null)
+            int? partIndex = null,
+            object? tmdbEpisode = null
+        )
         {
-            var images       = (IWithImages)ep;
+            var images = (IWithImages)ep;
             var seriesImages = (IWithImages)series;
-            var thumb        = ShokoRelay.Settings.TMDBThumbnails 
-                               ? images.GetImages(ImageEntityType.Thumbnail).FirstOrDefault() 
-                               : null;
+            var thumb = ShokoRelay.Settings.TMDBThumbnails ? images.GetImages(ImageEntityType.Thumbnail).FirstOrDefault() : null;
             var seriesBackdrop = seriesImages.GetImages(ImageEntityType.Backdrop).FirstOrDefault();
-            var seriesPoster   = seriesImages.GetImages(ImageEntityType.Poster).FirstOrDefault();
+            var seriesPoster = seriesImages.GetImages(ImageEntityType.Poster).FirstOrDefault();
 
-            string epTitle   = TextHelper.ResolveEpisodeTitle(ep, titles.DisplayTitle);
+            string epTitle = TextHelper.ResolveEpisodeTitle(ep, titles.DisplayTitle);
             string epSummary = ep.PreferredDescription;
 
             // For parts > 1, override with TMDB episode title/summary
@@ -195,18 +239,20 @@ namespace ShokoRelay.Meta
             ImageInfo[] imageArray = Array.Empty<ImageInfo>();
             if (ShokoRelay.Settings.TMDBThumbnails)
             {
-                imageArray = ImageHelper
-                    .GenerateImageArray(images, epTitle, ShokoRelay.Settings.AddEveryImage)
-                    .Where(img => img.type == "snapshot")
-                    .ToArray();
+                imageArray = ImageHelper.GenerateImageArray(images, epTitle, ShokoRelay.Settings.AddEveryImage).Where(img => img.type == "snapshot").ToArray();
             }
 
-            return new Dictionary<string, object?>
+            string? extraSubtype = null;
+            if (mapped.Season < 0 && TryGetExtraSeason(mapped.Season, out var exInfo))
+                extraSubtype = exInfo.Subtype;
+            // csharpier-ignore-start
+            var dict = new Dictionary<string, object?>
             {
                 ["ratingKey"]             = GetRatingKey("episode", ep.ID, null, partIndex),
                 ["key"]                   = $"/metadata/{GetRatingKey("episode", ep.ID, null, partIndex)}",
                 ["guid"]                  = GetGuid("episode", ep.ID, null, partIndex),
                 ["type"]                  = "episode",
+                ["subtype"]               = extraSubtype,
                 ["title"]                 = epTitle,
                 ["originallyAvailableAt"] = ep.AirDate?.ToString("yyyy-MM-dd"),
                 ["thumb"]                 = thumb != null ? ImageHelper.GetImageUrl(thumb) : null,
@@ -243,8 +289,11 @@ namespace ShokoRelay.Meta
                 ["Director"]              = CastHelper.GetDirectors(ep),
                 ["Producer"]              = CastHelper.GetProducers(ep),
                 ["Writer"]                = CastHelper.GetWriters(ep),
-                //["Rating"]              = TMDB/AniDB has this but it is not exposed
+                //["Rating"]              = BuildTmdbRatingArray(ep.Rating) // not exposed for episodes yet
             };
+            // csharpier-ignore-end
+
+            return dict;
         }
     }
 }

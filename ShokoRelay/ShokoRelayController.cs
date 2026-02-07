@@ -1,28 +1,20 @@
-using System;
-using System.IO;
-using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Mvc;
 using Shoko.Plugin.Abstractions.DataModels;
 using Shoko.Plugin.Abstractions.DataModels.Shoko;
 using Shoko.Plugin.Abstractions.Enums;
 using Shoko.Plugin.Abstractions.Services;
+using ShokoRelay.AnimeThemes;
 using ShokoRelay.Helpers;
 using ShokoRelay.Meta;
-using static ShokoRelay.Meta.PlexMapping;
 using static ShokoRelay.Helpers.MapHelper;
+using static ShokoRelay.Meta.PlexMapping;
 
 namespace ShokoRelay.Controllers
 {
     # region Models
     public record PlexMatchBody(string? Filename);
 
-    public record SeriesContext(
-        ISeries Series,
-        string ApiUrl,
-        (string DisplayTitle, string SortTitle, string? OriginalTitle) Titles,
-        string ContentRating,
-        SeriesFileData FileData
-    );
+    public record SeriesContext(ISeries Series, string ApiUrl, (string DisplayTitle, string SortTitle, string? OriginalTitle) Titles, string ContentRating, SeriesFileData FileData);
 
     #endregion
 
@@ -35,23 +27,30 @@ namespace ShokoRelay.Controllers
         private readonly IMetadataService _metadataService;
         private readonly PlexMetadata _mapper;
         private readonly VfsBuilder _vfsBuilder;
+        private readonly AnimeThemesGenerator _animeThemesGenerator;
+        private readonly AnimeThemesMapping _animeThemesMapping;
 
         private string BaseUrl => $"{Request.Scheme}://{Request.Host}";
 
-        private const string SeasonPrefix  = "s";
-        private const string EpisodePrefix = "e";
-        private const string PartPrefix    = "p";
+        private const string SeasonPrefix = PlexConstants.SeasonPrefix;
+        private const string EpisodePrefix = PlexConstants.EpisodePrefix;
+        private const string PartPrefix = PlexConstants.PartPrefix;
 
         public ShokoRelayController(
             IVideoService videoService,
             IMetadataService metadataService,
             PlexMetadata mapper,
-            VfsBuilder vfsBuilder)
+            VfsBuilder vfsBuilder,
+            AnimeThemesGenerator animeThemeGenerator,
+            AnimeThemesMapping animeThemesMapping
+        )
         {
             _videoService = videoService;
             _metadataService = metadataService;
             _mapper = mapper;
             _vfsBuilder = vfsBuilder;
+            _animeThemesGenerator = animeThemeGenerator;
+            _animeThemesMapping = animeThemesMapping;
         }
 
         [Route("match")]
@@ -63,7 +62,7 @@ namespace ShokoRelay.Controllers
             if (string.IsNullOrWhiteSpace(rawPath))
                 return EmptyMatch();
 
-            int? fileId = ExtractFileId(rawPath);
+            int? fileId = TextHelper.ExtractFileId(rawPath);
             if (!fileId.HasValue)
                 return EmptyMatch();
 
@@ -75,25 +74,27 @@ namespace ShokoRelay.Controllers
 
             var poster = (series as IWithImages)?.GetImages(ImageEntityType.Poster).FirstOrDefault();
 
-            return Ok(new
-            {
-                MediaContainer = new
+            return Ok(
+                new
                 {
-                    size = 1,
-                    identifier = ShokoRelayInfo.AgentScheme,
-                    Metadata = new[]
+                    MediaContainer = new
                     {
-                        new
+                        size = 1,
+                        identifier = ShokoRelayInfo.AgentScheme,
+                        Metadata = new[]
                         {
-                            guid = _mapper.GetGuid("show", series.ID),
-                            title = series.PreferredTitle,
-                            year = series.AirDate?.Year,
-                            score = 100,
-                            thumb = poster != null ? ImageHelper.GetImageUrl(poster) : null
-                        }
-                    }
+                            new
+                            {
+                                guid = _mapper.GetGuid("show", series.ID),
+                                title = series.PreferredTitle,
+                                year = series.AirDate?.Year,
+                                score = 100,
+                                thumb = poster != null ? ImageHelper.GetImageUrl(poster) : null,
+                            },
+                        },
+                    },
                 }
-            });
+            );
         }
 
         private SeriesContext? GetSeriesContext(string ratingKey)
@@ -107,96 +108,121 @@ namespace ShokoRelay.Controllers
                     epPart = epPart.Split(PartPrefix)[0];
 
                 var ep = _metadataService.GetShokoEpisodeByID(int.Parse(epPart));
-                if (ep?.Series == null) return null;
+                if (ep?.Series == null)
+                    return null;
                 seriesId = ep.Series.ID;
             }
             else if (ratingKey.Contains(SeasonPrefix))
             {
-                if (!int.TryParse(ratingKey.Split(SeasonPrefix)[0], out seriesId)) return null;
+                if (!int.TryParse(ratingKey.Split(SeasonPrefix)[0], out seriesId))
+                    return null;
             }
             else
             {
-                if (!int.TryParse(ratingKey, out seriesId)) return null;
+                if (!int.TryParse(ratingKey, out seriesId))
+                    return null;
             }
 
             var series = _metadataService.GetShokoSeriesByID(seriesId);
-            if (series == null) return null;
+            if (series == null)
+                return null;
 
-            return new SeriesContext(
-                series,
-                BaseUrl,
-                TextHelper.ResolveFullSeriesTitles(series),
-                RatingHelper.GetContentRatingAndAdult(series).Rating ?? "",
-                GetSeriesFileData(series)
-            );
+            return new SeriesContext(series, BaseUrl, TextHelper.ResolveFullSeriesTitles(series), RatingHelper.GetContentRatingAndAdult(series).Rating ?? "", GetSeriesFileData(series));
         }
 
-        private IActionResult WrapInContainer(object metadata) => Ok(new
-        {
-            MediaContainer = new
-            {
-                size = 1,
-                totalSize = 1,
-                offset = 0,
-                identifier = ShokoRelayInfo.AgentScheme,
-                Metadata = new[] { metadata }
-            }
-        });
+        private IActionResult WrapInContainer(object metadata) =>
+            Ok(
+                new
+                {
+                    MediaContainer = new
+                    {
+                        size = 1,
+                        totalSize = 1,
+                        offset = 0,
+                        identifier = ShokoRelayInfo.AgentScheme,
+                        Metadata = new[] { metadata },
+                    },
+                }
+            );
 
         private IActionResult EmptyMatch() => Ok(new { MediaContainer = new { size = 0, Metadata = Array.Empty<object>() } });
 
         private IActionResult WrapInPagedContainer(IEnumerable<object> metadataList)
         {
-            int start = int.TryParse(Request.Headers["X-Plex-Container-Start"], out var s) ? s :
-                        int.TryParse(Request.Query["X-Plex-Container-Start"], out var sq) ? sq : 0;
+            int start =
+                int.TryParse(Request.Headers["X-Plex-Container-Start"], out var s) ? s
+                : int.TryParse(Request.Query["X-Plex-Container-Start"], out var sq) ? sq
+                : 0;
 
-            int size = int.TryParse(Request.Headers["X-Plex-Container-Size"], out var z) ? z :
-                       int.TryParse(Request.Query["X-Plex-Container-Size"], out var zq) ? zq : 50;
+            int size =
+                int.TryParse(Request.Headers["X-Plex-Container-Size"], out var z) ? z
+                : int.TryParse(Request.Query["X-Plex-Container-Size"], out var zq) ? zq
+                : 50;
 
             var allItems = metadataList.ToList();
             var pagedData = allItems.Skip(start).Take(size).ToArray();
 
-            return Ok(new
-            {
-                MediaContainer = new
+            return Ok(
+                new
                 {
-                    offset = start,
-                    totalSize = allItems.Count,
-                    identifier = ShokoRelayInfo.AgentScheme,
-                    size = pagedData.Length,
-                    Metadata = pagedData
+                    MediaContainer = new
+                    {
+                        offset = start,
+                        totalSize = allItems.Count,
+                        identifier = ShokoRelayInfo.AgentScheme,
+                        size = pagedData.Length,
+                        Metadata = pagedData,
+                    },
                 }
-            });
+            );
         }
 
         [HttpGet]
-        public IActionResult GetMediaProvider() => Ok(new
+        public IActionResult GetMediaProvider()
         {
-            MediaProvider = new
-            {
-                identifier = ShokoRelayInfo.AgentScheme,
-                title = ShokoRelayInfo.Name,
-                version = ShokoRelayInfo.Version,
-                Types = new[]
+            var supportedTypes = new[] { PlexConstants.TypeShow, PlexConstants.TypeSeason, PlexConstants.TypeEpisode, PlexConstants.TypeCollection };
+
+            var typePayload = supportedTypes.Select(t => new { type = t, Scheme = new[] { new { scheme = ShokoRelayInfo.AgentScheme } } });
+
+            var featurePayload = new[] { new { type = "metadata", key = "/metadata" }, new { type = "match", key = "/matches" }, new { type = "collection", key = "/collections" } };
+
+            return Ok(
+                new
                 {
-                    new { type = 2, Scheme = new[] { new { scheme = ShokoRelayInfo.AgentScheme } } },
-                    new { type = 3, Scheme = new[] { new { scheme = ShokoRelayInfo.AgentScheme } } },
-                    new { type = 4, Scheme = new[] { new { scheme = ShokoRelayInfo.AgentScheme } } }
-                },
-                Feature = new[]
-                {
-                    new { type = "metadata"   , key = "/metadata" },
-                    new { type = "match"      , key = "/match" },
-                    new { type = "collection" , key = "/collection" }
+                    MediaProvider = new
+                    {
+                        identifier = ShokoRelayInfo.AgentScheme,
+                        title = ShokoRelayInfo.Name,
+                        version = ShokoRelayInfo.Version,
+                        Types = typePayload,
+                        Feature = featurePayload,
+                    },
                 }
-            }
-        });
+            );
+        }
+
+        [HttpGet("collections/{groupId}")]
+        public IActionResult GetCollection(int groupId)
+        {
+            var group = _metadataService.GetShokoGroupByID(groupId);
+            if (group == null)
+                return NotFound();
+
+            var primarySeries = group.MainSeries ?? group.Series?.FirstOrDefault();
+            if (primarySeries == null)
+                return NotFound();
+
+            var meta = _mapper.MapCollection(group, primarySeries);
+
+            return WrapInContainer(meta);
+        }
 
         [HttpGet("metadata/{ratingKey}")]
         public IActionResult GetMetadata(string ratingKey, [FromQuery] int includeChildren = 0)
         {
             var ctx = GetSeriesContext(ratingKey);
-            if (ctx == null) return NotFound();
+            if (ctx == null)
+                return NotFound();
 
             // --- EPISODE ---
             if (ratingKey.StartsWith(EpisodePrefix))
@@ -212,18 +238,15 @@ namespace ShokoRelay.Controllers
                 }
 
                 var episode = _metadataService.GetShokoEpisodeByID(int.Parse(epPart));
-                if (episode == null) return NotFound();
+                if (episode == null)
+                    return NotFound();
 
                 var coords = GetPlexCoordinates(episode);
                 object? tmdbEpisode = null;
 
-                if (partIndex.HasValue && ShokoRelay.Settings.TMDBStructure &&
-                    episode is IShokoEpisode shokoEp && shokoEp.TmdbEpisodes?.Any() == true)
+                if (partIndex.HasValue && ShokoRelay.Settings.TMDBStructure && episode is IShokoEpisode shokoEp && shokoEp.TmdbEpisodes?.Any() == true)
                 {
-                    var tmdbEps = shokoEp.TmdbEpisodes
-                        .OrderBy(te => te.SeasonNumber ?? 0)
-                        .ThenBy(te => te.EpisodeNumber)
-                        .ToList();
+                    var tmdbEps = shokoEp.TmdbEpisodes.OrderBy(te => te.SeasonNumber ?? 0).ThenBy(te => te.EpisodeNumber).ToList();
 
                     int idx = partIndex.Value - 1;
                     if (idx < tmdbEps.Count)
@@ -258,9 +281,7 @@ namespace ShokoRelay.Controllers
 
             if (includeChildren == 1)
             {
-                var seasons = ctx.FileData.Seasons
-                    .Select(s => _mapper.MapSeason(ctx.Series, s, ctx.Titles.DisplayTitle))
-                    .ToList();
+                var seasons = ctx.FileData.Seasons.Select(s => _mapper.MapSeason(ctx.Series, s, ctx.Titles.DisplayTitle)).ToList();
 
                 ((IDictionary<string, object?>)showMeta)["Children"] = new { size = seasons.Count, Metadata = seasons };
             }
@@ -272,7 +293,8 @@ namespace ShokoRelay.Controllers
         public IActionResult GetChildren(string ratingKey)
         {
             var ctx = GetSeriesContext(ratingKey);
-            if (ctx == null) return NotFound();
+            if (ctx == null)
+                return NotFound();
 
             if (ratingKey.Contains(SeasonPrefix))
             {
@@ -280,9 +302,7 @@ namespace ShokoRelay.Controllers
                 return WrapInPagedContainer(BuildEpisodeList(ctx, sNum));
             }
 
-            var seasons = ctx.FileData.Seasons
-                .Select(s => _mapper.MapSeason(ctx.Series, s, ctx.Titles.DisplayTitle))
-                .ToList();
+            var seasons = ctx.FileData.Seasons.Select(s => _mapper.MapSeason(ctx.Series, s, ctx.Titles.DisplayTitle)).ToList();
 
             return WrapInPagedContainer(seasons);
         }
@@ -291,10 +311,11 @@ namespace ShokoRelay.Controllers
         public IActionResult GetGrandchildren(string ratingKey)
         {
             var ctx = GetSeriesContext(ratingKey);
-            if (ctx == null) return NotFound();
+            if (ctx == null)
+                return NotFound();
 
-            var allEpisodes = ctx.FileData.Mappings
-                .OrderBy(m => m.Coords.Season)
+            var allEpisodes = ctx
+                .FileData.Mappings.OrderBy(m => m.Coords.Season)
                 .ThenBy(m => m.Coords.Episode)
                 .Select(m => _mapper.MapEpisode(m.PrimaryEpisode, m.Coords, ctx.Series, ctx.Titles, m.PartIndex, m.TmdbEpisode))
                 .ToList();
@@ -302,35 +323,94 @@ namespace ShokoRelay.Controllers
             return WrapInPagedContainer(allEpisodes);
         }
 
+        [HttpGet("animethemes")]
+        public async Task<IActionResult> GetAnimeThemes([FromQuery] AnimeThemesQuery query, CancellationToken cancellationToken = default)
+        {
+            if (query.Mapping)
+            {
+                string defaultBase = !string.IsNullOrWhiteSpace(ShokoRelay.Settings.AnimeThemesBasePath) ? ShokoRelay.Settings.AnimeThemesBasePath : AnimeThemesConstants.BasePath;
+
+                string root = query.TorrentRoot ?? query.Path ?? defaultBase;
+                var result = await _animeThemesMapping.BuildMappingFileAsync(root, query.MapPath, cancellationToken);
+                return Ok(result);
+            }
+
+            if (query.ApplyMapping)
+            {
+                string defaultBase = !string.IsNullOrWhiteSpace(ShokoRelay.Settings.AnimeThemesBasePath) ? ShokoRelay.Settings.AnimeThemesBasePath : AnimeThemesConstants.BasePath;
+
+                string? sourceRoot = query.TorrentRoot ?? query.Path ?? defaultBase;
+                var result = await _animeThemesMapping.ApplyMappingAsync(query.MapPath, sourceRoot, query.DryRun, cancellationToken);
+                return Ok(result);
+            }
+
+            if (string.IsNullOrWhiteSpace(query.Path))
+                return BadRequest(new { status = "error", message = "path is required" });
+
+            if (query.Play && query.Batch)
+                return BadRequest(new { status = "error", message = "play is not supported in batch mode" });
+
+            if (query.Batch)
+            {
+                var batch = await _animeThemesGenerator.ProcessBatchAsync(query, cancellationToken);
+                return Ok(batch);
+            }
+
+            if (query.Play)
+            {
+                var preview = await _animeThemesGenerator.PreviewAsync(query, cancellationToken);
+                if (preview.Error != null)
+                    return BadRequest(preview.Error);
+
+                if (preview.Preview == null)
+                    return NotFound(new { status = "error", message = "Preview failed." });
+
+                if (!string.IsNullOrWhiteSpace(preview.Preview.Title))
+                    Response.Headers["X-Theme-Title"] = preview.Preview.Title;
+
+                return File(preview.Preview.Stream, preview.Preview.ContentType, preview.Preview.FileName, enableRangeProcessing: true);
+            }
+
+            var single = await _animeThemesGenerator.ProcessSingleAsync(query, cancellationToken);
+            if (single.Status == "error")
+                return BadRequest(single);
+
+            return Ok(single);
+        }
+
         [HttpGet("vfs")]
         public IActionResult BuildVfs([FromQuery] int? seriesId = null, [FromQuery] bool clean = true, [FromQuery] bool dryRun = false, [FromQuery] bool run = false)
         {
             if (!run)
             {
-                return Ok(new
-                {
-                    status = "skipped",
-                    message = "Set run=true to build the VFS -OR- dryRun=true to simulate without making changes",
-                    seriesId,
-                    clean,
-                    dryRun
-                });
+                return Ok(
+                    new
+                    {
+                        status = "skipped",
+                        message = "Set run=true to build the VFS -OR- dryRun=true to simulate without making changes",
+                        seriesId,
+                        clean,
+                        dryRun,
+                    }
+                );
             }
 
             var result = _vfsBuilder.Build(seriesId, clean, dryRun);
-            return Ok(new
-            {
-                status = "ok",
-                root = result.RootPath,
-                seriesProcessed = result.SeriesProcessed,
-                linksCreated = result.CreatedLinks,
-                plannedLinks = result.PlannedLinks,
-                skipped = result.Skipped,
-                dryRun = result.DryRun,
-                reportPath = result.ReportPath,
-                report = result.ReportContent,
-                errors = result.Errors
-            });
+            return Ok(
+                new
+                {
+                    status = "ok",
+                    root = result.RootPath,
+                    seriesProcessed = result.SeriesProcessed,
+                    linksCreated = result.CreatedLinks,
+                    plannedLinks = result.PlannedLinks,
+                    skipped = result.Skipped,
+                    dryRun = result.DryRun,
+                    reportPath = result.ReportPath,
+                    report = result.ReportContent,
+                    errors = result.Errors,
+                }
+            );
         }
 
         private List<object> BuildEpisodeList(SeriesContext ctx, int seasonNum)
@@ -348,33 +428,13 @@ namespace ShokoRelay.Controllers
                 foreach (var ep in m.Episodes)
                 {
                     var coordsEp = GetPlexCoordinates(ep);
-                    if (coordsEp.Season != seasonNum) continue;
+                    if (coordsEp.Season != seasonNum)
+                        continue;
                     items.Add((coordsEp, _mapper.MapEpisode(ep, coordsEp, ctx.Series, ctx.Titles)));
                 }
             }
 
             return items.OrderBy(x => x.Coords.Episode).Select(x => x.Meta).ToList();
-        }
-
-        private static int? ExtractFileId(string rawPath)
-        {
-            var name = Path.GetFileName(rawPath);
-            if (string.IsNullOrWhiteSpace(name)) return null;
-
-            // Prefer the final [id] segment right before the extension
-            var specific = Regex.Match(name, "\\[(\\d+)\\](?=\\.[^.]+$)");
-            if (specific.Success && int.TryParse(specific.Groups[1].Value, out var idSpecific))
-                return idSpecific;
-
-            // Fallback: last bracketed number anywhere
-            var matches = Regex.Matches(name, "\\[(\\d+)\\]");
-            for (int i = matches.Count - 1; i >= 0; i--)
-            {
-                if (int.TryParse(matches[i].Groups[1].Value, out var id))
-                    return id;
-            }
-
-            return null;
         }
     }
 }

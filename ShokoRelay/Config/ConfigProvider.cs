@@ -2,27 +2,26 @@ using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
 using NLog;
 using Shoko.Plugin.Abstractions;
+using ShokoRelay.Helpers;
 
 namespace ShokoRelay.Config
 {
     public class ConfigProvider
     {
         private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
+
         private static RelayConfig CreateDefaultSettings() => new RelayConfig();
 
         private readonly string _filePath;
         private readonly object _settingsLock = new();
         private RelayConfig? _settings;
 
-        private static readonly JsonSerializerOptions Options = new()
-        {
-            AllowTrailingCommas = true,
-            WriteIndented = true
-        };
+        private static readonly JsonSerializerOptions Options = new() { AllowTrailingCommas = true, WriteIndented = true };
 
         public ConfigProvider(IApplicationPaths applicationPaths)
         {
-            _filePath = Path.Combine(applicationPaths.ProgramDataPath, ConfigConstants.ConfigFileName);
+            string pluginDir = PluginPaths.PluginDirectory;
+            _filePath = Path.Combine(pluginDir, ConfigConstants.ConfigFileName);
             Logger.Info($"Config path: {_filePath}");
         }
 
@@ -101,9 +100,7 @@ namespace ShokoRelay.Config
             {
                 foreach (var memberName in validationResult.MemberNames)
                 {
-                    Logger.Error(
-                        $"Error validating settings for property {memberName}: {validationResult.ErrorMessage}"
-                    );
+                    Logger.Error($"Error validating settings for property {memberName}: {validationResult.ErrorMessage}");
                 }
             }
 

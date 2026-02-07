@@ -1,11 +1,9 @@
 ![Shoko Relay Logo](https://github.com/natyusha/ShokoRelay.bundle/assets/985941/23bfd7c2-eb89-46d5-a7cb-558c374393d6 "Shoko Relay")  
 [![Discord](https://img.shields.io/discord/96234011612958720?logo=discord&logoColor=fff&label=Discord&color=5865F2 "Shoko Discord")](https://discord.com/channels/96234011612958720/268484849419943936)
 -
-This is a plugin for Shoko Server that acts as a [Custom Metadata Provider](https://forums.plex.tv/t/announcement-custom-metadata-providers/934384) for Plex.
-It is a successor to the [ShokoRelay.bundle](https://github.com/natyusha/ShokoRelay.bundle) legacy agent/scanner and intends to mirror all of its functionality. Scanning is much faster and it will be possible to add many new features as well.
+This is a plugin for Shoko Server that acts as a [Custom Metadata Provider](https://forums.plex.tv/t/announcement-custom-metadata-providers/934384) for Plex. It is a successor to the [ShokoRelay.bundle](https://github.com/natyusha/ShokoRelay.bundle) legacy agent/scanner and intends to mirror all of its functionality. Scanning is much faster and it will be possible to add many new features as well.
 
-Due to the lack of a custom scanner this plugin leverages a VFS (Virtual File Sytem) to ensure that varied folder structures are supported.
-This means that your anime can be organised with whatever file or folder structure you want. The only caveat is that a folder cannot contain more than one AniDB series at a time if you want it to correctly support [local media assets](https://support.plex.tv/articles/200220717-local-media-assets-tv-shows/) like `Theme.mp3`. The VFS will be automatically updated when a file move or rename is detected by Shoko.
+Due to the lack of a custom scanner this plugin leverages a VFS (Virtual File System) to ensure that varied folder structures are supported. This means that your anime can be organised with whatever file or folder structure you want. The only caveat is that a folder cannot contain more than one AniDB series at a time if you want it to correctly support [local media assets](https://support.plex.tv/articles/200220717-local-media-assets-tv-shows/) like `Theme.mp3`. The VFS will be automatically updated when a file move or rename is detected by Shoko.
 
 ## Installation
 ### Shoko
@@ -13,6 +11,7 @@ This means that your anime can be organised with whatever file or folder structu
 > The VFS is created inside each Shoko import folder under the folder name configured as `VFS Root Folder` (default `!ShokoRelayVFS`). To stop Shoko from scanning the generated links, add a regex entry to `settings-server.json` under `Exclude`:
 > ```json
 > "Exclude": [
+>   "[\\\/]!AnimeThemes[\\\/]",
 >   "[\\\/]!ShokoRelayVFS[\\\/]",
 >   "[\\\/]\\$RECYCLE\\.BIN[\\\/]",
 >   "[\\\/]\\.Recycle\\.Bin[\\\/]",
@@ -55,12 +54,27 @@ This means that your anime can be organised with whatever file or folder structu
     - Collections: `Hide items which are in collections`
     - Seasons: `Hide for single-season series`
 
+## AnimeThemes Integration
+#### Themes as Video Extras
+This plugin includes full integration for [AnimeThemes](https://animethemes.moe/). It will look for `.webm` themes files in a folder called `!AnimeThemes` which is located in the root of your anime library. These files must have the same filename as they do on the AnimeThemes website and then a mapping must be generated for them in what is essentially a 3 step process.
+1. Download anime theme videos and place them in the `!AnimeThemes` folder
+    - There is a torrent available with over 19000+ themes
+2. Generate a mapping for the the videos at the following url: `http://ShokoHost:ShokoPort/api/v3/ShokoRelay/animethemes?mapping=true`
+    - A mapping for the current torrent is available [here](https://gist.github.com/natyusha/4e29252d939d0f522d38732facf328c7) (mapping the whole torrent takes ~12 hours due to rate limits)
+3. Apply the mapping to the VFS at the following url: `http://ShokoHost:ShokoPort/api/v3/ShokoRelay/animethemes?applyMapping=true`
+
+#### Themes as Series BGM
+There is also support for generating `Theme.mp3` files as local metadata. This will add them to the VFS automatically and can be run for either a single series or as a batch operation. This requires Shoko Server to have access to [FFmpeg](https://ffmpeg.org/download.html) (place system appropriate binaries in the ShokoRelay plugin folder or have it in the system PATH) as AnimeThemes does not provide `.mp3` files.
+- Single Series: `http://ShokoHost:ShokoPort/api/v3/ShokoRelay/animethemes?path=PathToAnimeSeries`
+- Batch: `http://ShokoHost:ShokoPort/api/v3/ShokoRelay/animethemes?batch=PathToAnimeLibrary`
+
 ## Relay API Endpoints
 Append paths to the base: `http://ShokoHost:ShokoPort/api/v3/ShokoRelay`
 ```
 VFS             : /vfs
-Matching        : /match
-Collection      : /collection/{ShokoGroupID} (not fully implemented)
+Matching        : /matches
+Animethemes     : /animethemes
+Collection      : /collections/c{ShokoGroupID} (not fully implemented)
 Series          : /metadata/{ShokoSeriesID}
 Series Seasons  : /metadata/{ShokoSeriesID}/children
 Series Episodes : /metadata/{ShokoSeriesID}/grandchildren
@@ -68,6 +82,7 @@ Season          : /metadata/{ShokoSeriesID}s{SeasonNumber}
 Episode         : /metadata/e{ShokoEpisodeID}
 Episode Parts   : /metadata/e{ShokoEpisodeID}p{PartNumber}
 ```
+
 
 ## Information
 Due to this plugin relying on Shoko's plugin abstractions as well as Plex still actively developing this feature some TMDB/AniDB features are currently missing.
@@ -85,11 +100,11 @@ Due to this plugin relying on Shoko's plugin abstractions as well as Plex still 
 
 #### Missing AniDB Info
 - tag weights (not in shoko plugin abstractions)
-- similar anime
+- similar anime (not in shoko plugin abstractions)
 
 #### Missing Plex Provider Features
 - collections from shoko groups (not implemented)
-- ratings that aren't from tmdb/imdb/rotten tomatoes
+- ratings that aren't from tmdb/imdb/rotten tomatoes (currently the series rating is from AniDB but shows a TMDB logo)
 
 ## TODO
 - Once available in Shoko plugin abstractions:
@@ -107,9 +122,3 @@ Due to this plugin relying on Shoko's plugin abstractions as well as Plex still 
     - Will only do this if Shoko's integrated Auth flow will allow it to simplify the setup
 - Explore plex [webhooks](https://support.plex.tv/articles/115002267687-webhooks/) for full scrobble support
     - Should now be possible due to Relay's unique GUID scheme which utilises Shoko IDs
-- Fully integrate the animethemes video .torrent as extras in the VFS
-    - This will be configured to only add themes to the VFS if the user has the series in Shoko
-    - Make a mapping file via animethemes API so other users don't hammer it
-    - No need to link anything to anidb/shoko can use Plex extras folders
-- Potentially integrate [animethemes.py](https://github.com/natyusha/ShokoRelay.bundle/blob/master/Contents/Scripts/animethemes.py) into the plugin
-    - This would require ffmpeg

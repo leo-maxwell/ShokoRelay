@@ -1,7 +1,4 @@
-using System;
 using System.Collections.Concurrent;
-using System.Linq;
-using System.Threading.Tasks;
 using NLog;
 using Shoko.Plugin.Abstractions;
 using Shoko.Plugin.Abstractions.Events;
@@ -51,7 +48,8 @@ namespace ShokoRelay.Meta
         {
             lock (_gate)
             {
-                if (_processing) return;
+                if (_processing)
+                    return;
                 _processing = true;
                 Task.Run(ProcessQueue);
             }
@@ -64,7 +62,8 @@ namespace ShokoRelay.Meta
                 while (true)
                 {
                     int seriesId;
-                    if (!_pending.Keys.Any()) break;
+                    if (!_pending.Keys.Any())
+                        break;
                     seriesId = _pending.Keys.First();
                     _pending.TryRemove(seriesId, out _);
 

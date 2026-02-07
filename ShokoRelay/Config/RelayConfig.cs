@@ -1,14 +1,17 @@
-using System.Collections.Generic;
-using System.ComponentModel.DataAnnotations;
 using System.ComponentModel;
+using System.ComponentModel.DataAnnotations;
 
 namespace ShokoRelay.Config
 {
-    public static class ConfigConstants { public const string ConfigFileName = "ShokoRelayConfig.json"; }
+    public static class ConfigConstants
+    {
+        public const string ConfigFileName = "ShokoRelayConfig.json";
+    }
+
     public enum RelayMode
     {
-        None = 0,
-        Vfs = 1
+        Vfs = 0,
+        None = 1,
     }
 
     public enum SummaryMode
@@ -16,7 +19,7 @@ namespace ShokoRelay.Config
         FullySanitize = 0,
         AllowInfoLines = 1,
         AllowMiscLines = 2,
-        AllowBoth = 3
+        AllowBoth = 3,
     }
 
     public class RelayConfig
@@ -94,10 +97,18 @@ namespace ShokoRelay.Config
         public RelayMode Mode { get; set; } = RelayMode.Vfs;
 
         [Display(Name = "Crossover Overrides", Description = "Key=AniDB Episode ID, Value=AniDB Series ID to force map crossovers.")]
-        public Dictionary<int, int> CrossoverOverrides { get; set; } = new()
-        {
-            { 146131, 8142 },
-            { 147453, 69 }
-        };
+        public Dictionary<int, int> CrossoverOverrides { get; set; } = new() { { 146131, 8142 }, { 147453, 69 } };
+
+        [Display(Name = "Anime Themes Base Path", Description = "The base path for the AnimeThemes torrent (used when generating mapping files).")]
+        [DefaultValue("/animethemes/")]
+        public string AnimeThemesBasePath { get; set; } = "/animethemes/";
+
+        [Display(Name = "Anime Themes Root Folder", Description = "Folder name that houses the AnimeThemes torrent inside each import root (e.g. !AnimeThemes).")]
+        [DefaultValue("!AnimeThemes")]
+        public string AnimeThemesRootPath { get; set; } = "!AnimeThemes";
+
+        [Display(Name = "FFmpeg Path", Description = "Optional folder containing ffmpeg/ffprobe. Leave empty to use the plugin directory.")]
+        [DefaultValue("")]
+        public string FFmpegPath { get; set; } = "";
     }
 }

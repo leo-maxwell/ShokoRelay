@@ -16,28 +16,36 @@ namespace ShokoRelay.Helpers
         {
             int order = 1;
 
-            var cast = item.Cast?
-                .Select(c => (object)new
-                {
-                    order = order++,
-                    tag = GetName(c.Creator, c.Name),
-                    role = c.Character?.Name ?? c.Name,
-                    thumb = c.Creator?.PortraitImage is { } img ? ImageHelper.GetImageUrl(img, "Staff") : null
-                })
-                .ToArray() ?? Array.Empty<object>();
+            var cast =
+                item.Cast?.Select(c =>
+                        (object)
+                            new
+                            {
+                                order = order++,
+                                tag = GetName(c.Creator, c.Name),
+                                role = c.Character?.Name ?? c.Name,
+                                thumb = c.Creator?.PortraitImage is { } img ? ImageHelper.GetImageUrl(img, "Staff") : null,
+                            }
+                    )
+                    .ToArray()
+                ?? Array.Empty<object>();
 
             if (!ShokoRelay.Settings.CrewListings)
                 return cast;
 
-            var crew = item.Crew?
-                .Select(c => (object)new
-                {
-                    order = order++,
-                    tag = GetName(c.Creator, c.Name),
-                    role = c.RoleType == CrewRoleType.Music ? "Composer" : c.Name,
-                    thumb = c.Creator?.PortraitImage is { } img ? ImageHelper.GetImageUrl(img, "Staff") : null
-                })
-                .ToArray() ?? Array.Empty<object>();
+            var crew =
+                item.Crew?.Select(c =>
+                        (object)
+                            new
+                            {
+                                order = order++,
+                                tag = GetName(c.Creator, c.Name),
+                                role = c.RoleType == CrewRoleType.Music ? "Composer" : c.Name,
+                                thumb = c.Creator?.PortraitImage is { } img ? ImageHelper.GetImageUrl(img, "Staff") : null,
+                            }
+                    )
+                    .ToArray()
+                ?? Array.Empty<object>();
 
             return cast.Concat(crew).ToArray();
         }
@@ -45,27 +53,18 @@ namespace ShokoRelay.Helpers
         public static object[] GetDirectors(IWithCastAndCrew item) => FilterCrew(item, CrewRoleType.Director);
 
         public static object[] GetWriters(IWithCastAndCrew item) =>
-            item.Crew?
-                .Where(c => c.RoleType is CrewRoleType.SeriesComposer or CrewRoleType.SourceWork)
-                .Select(c => (object)new { tag = GetName(c.Creator, c.Name) })
-                .ToArray() ?? Array.Empty<object>();
+            item.Crew?.Where(c => c.RoleType is CrewRoleType.SeriesComposer or CrewRoleType.SourceWork).Select(c => (object)new { tag = GetName(c.Creator, c.Name) }).ToArray()
+            ?? Array.Empty<object>();
 
         public static object[] GetProducers(IWithCastAndCrew item) => FilterCrew(item, CrewRoleType.Producer);
 
         public static TagItem[] GetStudioTags(ISeries series) =>
-            series.Studios?
-                .Where(s => !string.IsNullOrWhiteSpace(s.Name))
-                .Select(s => s.Name)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .Select(name => new TagItem { tag = name })
-                .ToArray() ?? Array.Empty<TagItem>();
+            series.Studios?.Where(s => !string.IsNullOrWhiteSpace(s.Name)).Select(s => s.Name).Distinct(StringComparer.OrdinalIgnoreCase).Select(name => new TagItem { tag = name }).ToArray()
+            ?? Array.Empty<TagItem>();
 
         public static string? GetStudio(ISeries series) => series.Studios?.FirstOrDefault()?.Name;
 
         private static object[] FilterCrew(IWithCastAndCrew item, CrewRoleType roleType) =>
-            item.Crew?
-                .Where(c => c.RoleType == roleType)
-                .Select(c => (object)new { tag = GetName(c.Creator, c.Name) })
-                .ToArray() ?? Array.Empty<object>();
+            item.Crew?.Where(c => c.RoleType == roleType).Select(c => (object)new { tag = GetName(c.Creator, c.Name) }).ToArray() ?? Array.Empty<object>();
     }
 }

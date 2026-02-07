@@ -1,10 +1,11 @@
 ﻿using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using NLog;
+using Shoko.Plugin.Abstractions;
+using ShokoRelay.AnimeThemes;
 using ShokoRelay.Config;
 using ShokoRelay.Helpers;
 using ShokoRelay.Meta;
-using Shoko.Plugin.Abstractions;
 
 namespace ShokoRelay
 {
@@ -13,9 +14,10 @@ namespace ShokoRelay
         public void RegisterServices(IServiceCollection serviceCollection, IApplicationPaths applicationPaths)
         {
             serviceCollection.AddHttpContextAccessor();
-            serviceCollection.AddControllers()
-                .AddApplicationPart(typeof(ServiceRegistration).Assembly);
+            serviceCollection.AddControllers().AddApplicationPart(typeof(ServiceRegistration).Assembly);
             serviceCollection.AddSingleton(new ConfigProvider(applicationPaths));
+            serviceCollection.AddSingleton<AnimeThemesGenerator>();
+            serviceCollection.AddSingleton<AnimeThemesMapping>();
             serviceCollection.AddSingleton<PlexMetadata>();
             serviceCollection.AddSingleton<VfsBuilder>();
             serviceCollection.AddSingleton<VfsWatcher>();
@@ -33,10 +35,7 @@ namespace ShokoRelay
 
         private readonly VfsWatcher _watcher;
 
-        public ShokoRelay(
-            IApplicationPaths applicationPaths,
-            IHttpContextAccessor httpContextAccessor,
-            VfsWatcher watcher)
+        public ShokoRelay(IApplicationPaths applicationPaths, IHttpContextAccessor httpContextAccessor, VfsWatcher watcher)
         {
             _configProvider = new ConfigProvider(applicationPaths);
 

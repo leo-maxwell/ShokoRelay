@@ -1,33 +1,20 @@
-using System.Collections.Generic;
-using System.Linq;
-using Shoko.Plugin.Abstractions.DataModels.Shoko;
 using Shoko.Plugin.Abstractions.DataModels;
+using Shoko.Plugin.Abstractions.DataModels.Shoko;
 
 namespace ShokoRelay.Meta
 {
     public static class PlexMapping
     {
-        // Extra buckets used only when no TMDB match is present.
-        private static readonly IReadOnlyDictionary<int, (string Folder, string Prefix)> ExtraSeasons =
-            new Dictionary<int, (string Folder, string Prefix)>
-            {
-                { -1, ("Shorts", "Credits") },
-                { -2, ("Trailers", "Trailers") },
-                { -3, ("Scenes", "Parody") },
-                { -4, ("Featurettes", "Other") },
-                { -99, ("Other", "Unknown") }
-            };
-
-        public struct PlexCoords 
-        { 
-            public int Season; 
-            public int Episode; 
-            public int? EndEpisode; 
+        public struct PlexCoords
+        {
+            public int Season;
+            public int Episode;
+            public int? EndEpisode;
         }
 
-        public static bool TryGetExtraSeason(int seasonNumber, out (string Folder, string Prefix) info)
+        public static bool TryGetExtraSeason(int seasonNumber, out (string Folder, string Prefix, string Subtype) info)
         {
-            return ExtraSeasons.TryGetValue(seasonNumber, out info);
+            return PlexConstants.ExtraSeasons.TryGetValue(seasonNumber, out info);
         }
 
         public static string GetSeasonFolderName(int seasonNumber)
@@ -35,7 +22,8 @@ namespace ShokoRelay.Meta
             if (TryGetExtraSeason(seasonNumber, out var special))
                 return special.Folder;
 
-            if (seasonNumber == 0) return "Specials";
+            if (seasonNumber == 0)
+                return "Specials";
             return $"Season {seasonNumber}";
         }
 
@@ -44,7 +32,8 @@ namespace ShokoRelay.Meta
             if (TryGetExtraSeason(seasonNumber, out var special))
                 return special.Prefix;
 
-            if (seasonNumber == 0) return "Specials";
+            if (seasonNumber == 0)
+                return "Specials";
             return $"Season {seasonNumber}";
         }
 
@@ -52,20 +41,18 @@ namespace ShokoRelay.Meta
         {
             if (ShokoRelay.Settings.TMDBStructure && e is IShokoEpisode shokoEpisode)
             {
-                var tmdbEpisodes = shokoEpisode.TmdbEpisodes
-                    .OrderBy(te => te.EpisodeNumber)
-                    .ToList();
+                var tmdbEpisodes = shokoEpisode.TmdbEpisodes.OrderBy(te => te.EpisodeNumber).ToList();
 
                 if (tmdbEpisodes.Count > 0)
                 {
                     var first = tmdbEpisodes.First();
                     if (first.SeasonNumber.HasValue)
                     {
-                        return new PlexCoords 
-                        { 
-                            Season = first.SeasonNumber.Value, 
+                        return new PlexCoords
+                        {
+                            Season = first.SeasonNumber.Value,
                             Episode = first.EpisodeNumber,
-                            EndEpisode = tmdbEpisodes.Count > 1 ? tmdbEpisodes.Last().EpisodeNumber : null
+                            EndEpisode = tmdbEpisodes.Count > 1 ? tmdbEpisodes.Last().EpisodeNumber : null,
                         };
                     }
                 }
@@ -76,23 +63,28 @@ namespace ShokoRelay.Meta
 
             return e.Type switch
             {
-                EpisodeType.Other   => new PlexCoords { Season = -4, Episode = epNum },
-                EpisodeType.Credits => new PlexCoords { Season = -1, Episode = epNum },
-                EpisodeType.Trailer => new PlexCoords { Season = -2, Episode = epNum },
-                EpisodeType.Parody  => new PlexCoords { Season = -3, Episode = epNum },
-                _                   => new PlexCoords { Season = seasonNum, Episode = epNum }
+                EpisodeType.Other => new PlexCoords { Season = PlexConstants.SeasonOther, Episode = epNum },
+                EpisodeType.Credits => new PlexCoords { Season = PlexConstants.SeasonCredits, Episode = epNum },
+                EpisodeType.Trailer => new PlexCoords { Season = PlexConstants.SeasonTrailers, Episode = epNum },
+                EpisodeType.Parody => new PlexCoords { Season = PlexConstants.SeasonParody, Episode = epNum },
+                _ => new PlexCoords { Season = seasonNum, Episode = epNum },
             };
         }
 
         public static PlexCoords GetPlexCoordinatesForFile(IEnumerable<IEpisode> episodes, int? fileIndexWithinEpisode = null)
         {
             var eps = (episodes ?? Enumerable.Empty<IEpisode>()).ToList();
-            if (!eps.Any()) return new PlexCoords { Season = 1, Episode = 1, EndEpisode = null };
+            if (!eps.Any())
+                return new PlexCoords
+                {
+                    Season = 1,
+                    Episode = 1,
+                    EndEpisode = null,
+                };
 
             if (ShokoRelay.Settings.TMDBStructure)
             {
-                var tmdbEntries = eps
-                    .OfType<IShokoEpisode>()
+                var tmdbEntries = eps.OfType<IShokoEpisode>()
                     .Where(se => se.TmdbEpisodes != null && se.TmdbEpisodes.Any())
                     .SelectMany(se => se.TmdbEpisodes)
                     .OrderBy(te => te.SeasonNumber ?? 0)
@@ -113,7 +105,7 @@ namespace ShokoRelay.Meta
                             {
                                 Season = tmdbEp.SeasonNumber ?? first.SeasonNumber.Value,
                                 Episode = tmdbEp.EpisodeNumber,
-                                EndEpisode = null
+                                EndEpisode = null,
                             };
                         }
                         else if (!fileIndexWithinEpisode.HasValue || tmdbEntries.Count == 1)
@@ -125,7 +117,7 @@ namespace ShokoRelay.Meta
                             {
                                 Season = first.SeasonNumber.Value,
                                 Episode = first.EpisodeNumber,
-                                EndEpisode = endEpisode
+                                EndEpisode = endEpisode,
                             };
                         }
                     }
@@ -145,7 +137,7 @@ namespace ShokoRelay.Meta
             {
                 Season = start.Season,
                 Episode = start.Episode,
-                EndEpisode = endEpisodeFinal
+                EndEpisode = endEpisodeFinal,
             };
         }
 
@@ -157,13 +149,13 @@ namespace ShokoRelay.Meta
 
             return e.Type switch
             {
-                EpisodeType.Episode =>  1,
-                EpisodeType.Special =>  0,
-                EpisodeType.Credits => -1,
-                EpisodeType.Trailer => -2,
-                EpisodeType.Parody  => -3,
-                EpisodeType.Other   => -4,
-                _                   => -99
+                EpisodeType.Episode => PlexConstants.SeasonStandard,
+                EpisodeType.Special => PlexConstants.SeasonSpecials,
+                EpisodeType.Credits => PlexConstants.SeasonCredits,
+                EpisodeType.Trailer => PlexConstants.SeasonTrailers,
+                EpisodeType.Parody => PlexConstants.SeasonParody,
+                EpisodeType.Other => PlexConstants.SeasonOther,
+                _ => PlexConstants.SeasonUnknown,
             };
         }
     }

@@ -6,9 +6,18 @@ namespace ShokoRelay.Helpers
     {
         private static readonly HashSet<string> RatingTags = new(StringComparer.OrdinalIgnoreCase)
         {
-            "kodomo", "mina", "shoujo", "shounen",
-            "josei", "seinen", "borderline porn", "18 restricted",
-            "nudity", "sex", "violence", "sexual humour"
+            "kodomo",
+            "mina",
+            "shoujo",
+            "shounen",
+            "josei",
+            "seinen",
+            "borderline porn",
+            "18 restricted",
+            "nudity",
+            "sex",
+            "violence",
+            "sexual humour",
         };
 
         public static (string? Rating, bool IsAdult) GetContentRatingAndAdult(ISeries? series)
@@ -27,16 +36,21 @@ namespace ShokoRelay.Helpers
             var descriptorD = tagSet.Contains("sexual humour") ? "D" : "";
             var descriptorS = (tagSet.Contains("nudity") || tagSet.Contains("sex")) ? "S" : "";
             var descriptorV = tagSet.Contains("violence") ? "V" : "";
-            var descriptor  = (descriptorD + descriptorS + descriptorV) != "" ? "-" + (descriptorD + descriptorS + descriptorV) : "";
+            var descriptor = (descriptorD + descriptorS + descriptorV) != "" ? "-" + (descriptorD + descriptorS + descriptorV) : "";
 
             // Uses the target audience tags on AniDB: https://anidb.net/tag/2606/animetb
             string? c_rating = null;
-            if (tagSet.Contains("kodomo")) c_rating = "TV-Y";
-            else if (tagSet.Contains("mina")) c_rating = "TV-G";
-            else if (tagSet.Contains("shoujo") || tagSet.Contains("shounen")) c_rating = "TV-PG";
-            else if (tagSet.Contains("josei") || tagSet.Contains("seinen")) c_rating = "TV-14";
+            if (tagSet.Contains("kodomo"))
+                c_rating = "TV-Y";
+            else if (tagSet.Contains("mina"))
+                c_rating = "TV-G";
+            else if (tagSet.Contains("shoujo") || tagSet.Contains("shounen"))
+                c_rating = "TV-PG";
+            else if (tagSet.Contains("josei") || tagSet.Contains("seinen"))
+                c_rating = "TV-14";
 
-            if (tagSet.Contains("borderline porn")) c_rating = "TV-MA";
+            if (tagSet.Contains("borderline porn"))
+                c_rating = "TV-MA";
 
             if (!string.IsNullOrEmpty(c_rating))
                 c_rating = c_rating + descriptor;
@@ -47,13 +61,16 @@ namespace ShokoRelay.Helpers
         private static HashSet<string> BuildTagSet(ISeries? series)
         {
             var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            if (series?.Tags == null) return set;
+            if (series?.Tags == null)
+                return set;
 
             foreach (var t in series.Tags)
             {
-                if (t == null) continue;
+                if (t == null)
+                    continue;
                 var name = t.Name?.Trim();
-                if (string.IsNullOrWhiteSpace(name)) continue;
+                if (string.IsNullOrWhiteSpace(name))
+                    continue;
 
                 var srcProp = t.GetType().GetProperty("Source");
                 if (srcProp != null)
@@ -63,7 +80,8 @@ namespace ShokoRelay.Helpers
                         continue;
                 }
 
-                if (!RatingTags.Contains(name)) continue;
+                if (!RatingTags.Contains(name))
+                    continue;
 
                 set.Add(name);
             }
