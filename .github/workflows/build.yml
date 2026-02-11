@@ -30,13 +30,12 @@ jobs:
         continue-on-error: true
 
       - name: Publish (portable)
-        run: dotnet publish ShokoRelay.sln -c Release -o out
+        run: dotnet publish ShokoRelay/ShokoRelay.csproj -c Release --no-restore -o out/ShokoRelay
 
       - name: Package plugin zip
         run: |
-          cd out
-          zip -r ../ShokoRelay-plugin.zip .
-          cd ..
+          cd out/ShokoRelay
+          zip -r ../../ShokoRelay-plugin.zip .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
