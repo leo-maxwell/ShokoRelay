@@ -15,6 +15,34 @@
   "image_url": "https://raw.githubusercontent.com/leo-maxwell/ShokoRelay/subtitle-rename-testing/ShokoRelay/Assets/shoko-relay-logo.png",
   "releases": [
     {
+      "version": "0.17.4-dev.1003",
+      "tag": "v0.17.4-dev.1003",
+      "source_revision": "4e6cb56deaf171db40df18ba70476037d2367510",
+      "released_at": "2026-09-10T12:31:26Z",
+      "channel": "Dev",
+      "release_notes": "Fix the subtitle rule insertion marker changing position and brightness while dragging across the same gap. Both approaches now show a 3px line centered in the gap at full opacity; only the dragged row contents fade.\n\nThis is a CSS fix. Rule selection, reordering, automatic saving, and the configuration format are unchanged. The regression check covers both sides of the gap next to the dragged row.\n\nUpdate from the subtitle testing repository, select and pin v0.17.4-dev.1003, and restart Shoko. Force-reload the ShokoRelay dashboard to load the updated CSS.\n\nFeature commit: 38d5496. The fix originates on subtitle-rename and is merged into subtitle-rename-testing; testing repository and publishing changes remain confined to the testing branch.",
+      "archives": [
+        {
+          "runtime": "linux-arm64",
+          "abstraction": "6.0.0",
+          "url": "https://github.com/leo-maxwell/ShokoRelay/releases/download/v0.17.4-dev.1003/ShokoRelay-v0.17.4-dev.1003_linux-arm64.zip",
+          "checksum": "sha256:1d031d3d28e831dddd762d4ff785a0f9e92e44a6a10f437b86d1efcf71ca5826"
+        },
+        {
+          "runtime": "linux-x64",
+          "abstraction": "6.0.0",
+          "url": "https://github.com/leo-maxwell/ShokoRelay/releases/download/v0.17.4-dev.1003/ShokoRelay-v0.17.4-dev.1003_linux-x64.zip",
+          "checksum": "sha256:282dd987955f1480de042033bbd0f72e3579be5f9c82ddc5a6150065bee7fb48"
+        },
+        {
+          "runtime": "win-x64",
+          "abstraction": "6.0.0",
+          "url": "https://github.com/leo-maxwell/ShokoRelay/releases/download/v0.17.4-dev.1003/ShokoRelay-v0.17.4-dev.1003_win-x64.zip",
+          "checksum": "sha256:6b6054e8d655905d352d2603160245d84513f38bab32f8d1f8c58339cac49485"
+        }
+      ]
+    },
+    {
       "version": "0.17.4-dev.1002",
       "tag": "v0.17.4-dev.1002",
       "source_revision": "2f510776fb60c4c42e3c19f7646438012a92f5d0",
