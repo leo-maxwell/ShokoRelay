@@ -13,5 +13,34 @@
     "animethemes"
   ],
   "image_url": "https://raw.githubusercontent.com/leo-maxwell/ShokoRelay/subtitle-rename-testing/ShokoRelay/Assets/shoko-relay-logo.png",
-  "releases": []
+  "releases": [
+    {
+      "version": "0.17.4-dev.1001",
+      "tag": "v0.17.4-dev.1001",
+      "source_revision": "25c3fd4173484bbf1724571e9cb10384f8da9249",
+      "released_at": "2026-09-10T11:23:08Z",
+      "channel": "Dev",
+      "release_notes": "Experimental ShokoRelay build adding ordered subtitle suffix rules to the VFS. Rules can map one subtitle to several output suffixes, preserve existing final suffixes, and resolve competing sources by row order and subtitle format.\n\nBuilt from `subtitle-rename-testing`, incorporating feature commit `4d79596`. Testing manifest and publishing changes stay on this branch; `subtitle-rename` remains the upstream feature branch.\n\nPackages target Linux ARM64, Linux x64, and Windows x64. Requires a compatible Shoko 6 daily build with .NET 10; the plugin references Shoko.Abstractions 6.0.0-alpha.84. The release workflow runs the test suite before publishing archives and updates the feed after all platforms succeed.\n\nAdd this repository manifest in Shoko:\n\nhttps://raw.githubusercontent.com/leo-maxwell/ShokoRelay/subtitle-rename-testing/manifest.json\n\nThe test version keeps the official plugin identity and uses the same configuration and Plex token. Back up the complete active configuration directory first. Keep official v0.17.3 installed for rollback, enable and pin this test version, restart Shoko, and force-reload the dashboard. If disabling the old version manually, do that before enabling the test version. Do not purge the shared configuration.\n\nStart with preview and a filtered VFS refresh on a small series. Verify subtitle selection and playback in Plex before expanding the test. See [testing instructions](https://github.com/leo-maxwell/ShokoRelay/blob/subtitle-rename-testing/Docs/Testing.md).",
+      "archives": [
+        {
+          "runtime": "linux-arm64",
+          "abstraction": "6.0.0",
+          "url": "https://github.com/leo-maxwell/ShokoRelay/releases/download/v0.17.4-dev.1001/ShokoRelay-v0.17.4-dev.1001_linux-arm64.zip",
+          "checksum": "sha256:11a7554e8ac50c9575bdb3f7a9fd5334da4b193c342c2f06b825256c92957084"
+        },
+        {
+          "runtime": "linux-x64",
+          "abstraction": "6.0.0",
+          "url": "https://github.com/leo-maxwell/ShokoRelay/releases/download/v0.17.4-dev.1001/ShokoRelay-v0.17.4-dev.1001_linux-x64.zip",
+          "checksum": "sha256:d866bab9075bdeae397ab17fe6ad3786e8ba9c810ec27453ff34676dd818d737"
+        },
+        {
+          "runtime": "win-x64",
+          "abstraction": "6.0.0",
+          "url": "https://github.com/leo-maxwell/ShokoRelay/releases/download/v0.17.4-dev.1001/ShokoRelay-v0.17.4-dev.1001_win-x64.zip",
+          "checksum": "sha256:e4e54e7caf648562f544e5d0319917830247d9a1de4232eb78ae8f1b515b2327"
+        }
+      ]
+    }
+  ]
 }
