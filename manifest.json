@@ -15,6 +15,34 @@
   "image_url": "https://raw.githubusercontent.com/leo-maxwell/ShokoRelay/subtitle-rename-testing/ShokoRelay/Assets/shoko-relay-logo.png",
   "releases": [
     {
+      "version": "0.17.4-dev.1004",
+      "tag": "v0.17.4-dev.1004",
+      "source_revision": "52f92c2d56a6ee9fd1934bd9cc29a8652635b82e",
+      "released_at": "2026-09-10T14:32:57Z",
+      "channel": "Dev",
+      "release_notes": "Subtitle naming is now configured only in `preferences.json`, keeping the original upstream settings page.\n\n- Existing `Advanced.SubtitleRenameRules` remain compatible and preserve their ordered source-selection policy.\n- New `Advanced.SubtitleFormatPreference` defaults to `[\"ass\", \"ssa\", \"srt\", \"vtt\", \"smi\"]`. Set it to `[\"srt\"]` to prefer SRT, followed by the other supported formats in their default order.\n- Preferences accept up to ten distinct supported extensions, each containing one to ten ASCII letters or digits. Case, surrounding whitespace, and one leading dot are normalized; invalid, unsupported, and duplicate entries are ignored.\n- The complete editor, preview, autosave, and drag ordering are preserved in the annotated `subtitle-rename-ui-v1` tag for future work.\n\nEdit these fields inside the existing `Advanced` object, reload any open dashboard, and refresh the affected VFS paths. Original subtitle files remain untouched. The testing build keeps the existing plugin UUID and configuration location.\n\nValidation: 63 tests passed locally, including physical mixed-case filenames and symlink refreshes. Release CI reruns the tests before packaging Linux ARM64, Linux x64, and Windows x64.",
+      "archives": [
+        {
+          "runtime": "linux-arm64",
+          "abstraction": "6.0.0",
+          "url": "https://github.com/leo-maxwell/ShokoRelay/releases/download/v0.17.4-dev.1004/ShokoRelay-v0.17.4-dev.1004_linux-arm64.zip",
+          "checksum": "sha256:7b41d270a3c08a3b14047a619541287e2a0b1cf15e77c640f00b5730213454d6"
+        },
+        {
+          "runtime": "linux-x64",
+          "abstraction": "6.0.0",
+          "url": "https://github.com/leo-maxwell/ShokoRelay/releases/download/v0.17.4-dev.1004/ShokoRelay-v0.17.4-dev.1004_linux-x64.zip",
+          "checksum": "sha256:704582d2b5653f3050915c35968b9331858d9dff53d7f324bbfdcb0a7d7ebbe8"
+        },
+        {
+          "runtime": "win-x64",
+          "abstraction": "6.0.0",
+          "url": "https://github.com/leo-maxwell/ShokoRelay/releases/download/v0.17.4-dev.1004/ShokoRelay-v0.17.4-dev.1004_win-x64.zip",
+          "checksum": "sha256:4359cbc8b369edb2b8b257908a1b2efc435fa3cf46a95143c8c495ceb4c4c724"
+        }
+      ]
+    },
+    {
       "version": "0.17.4-dev.1003",
       "tag": "v0.17.4-dev.1003",
       "source_revision": "4e6cb56deaf171db40df18ba70476037d2367510",
