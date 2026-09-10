@@ -15,6 +15,34 @@
   "image_url": "https://raw.githubusercontent.com/leo-maxwell/ShokoRelay/subtitle-rename-testing/ShokoRelay/Assets/shoko-relay-logo.png",
   "releases": [
     {
+      "version": "0.17.4-dev.1002",
+      "tag": "v0.17.4-dev.1002",
+      "source_revision": "2f510776fb60c4c42e3c19f7646438012a92f5d0",
+      "released_at": "2026-09-10T12:12:01Z",
+      "channel": "Dev",
+      "release_notes": "Subtitle suffix rules now have three-line drag handles. Drag a handle above or below another row to change priority; the order saves when dropped. The existing Move up and Move down buttons remain available for keyboard use and touch browsers without native drag support.\n\nThe editor uses the existing validation, automatic saving, retry, and preview behavior. Subtitle selection and the configuration format are unchanged.\n\nUpdate from the subtitle testing repository, select and pin v0.17.4-dev.1002, and restart Shoko. Force-reload the ShokoRelay dashboard to load the updated JavaScript, CSS, and icons.\n\nFeature commit: 0e14ff4. This release includes feature changes from subtitle-rename; testing repository and release changes remain confined to subtitle-rename-testing.",
+      "archives": [
+        {
+          "runtime": "linux-arm64",
+          "abstraction": "6.0.0",
+          "url": "https://github.com/leo-maxwell/ShokoRelay/releases/download/v0.17.4-dev.1002/ShokoRelay-v0.17.4-dev.1002_linux-arm64.zip",
+          "checksum": "sha256:ba4fbaf80439e4facc46f1234ba0fd4181aa6c9e760e824fc68982416cab044f"
+        },
+        {
+          "runtime": "linux-x64",
+          "abstraction": "6.0.0",
+          "url": "https://github.com/leo-maxwell/ShokoRelay/releases/download/v0.17.4-dev.1002/ShokoRelay-v0.17.4-dev.1002_linux-x64.zip",
+          "checksum": "sha256:9c71c3091693967811ebe044add47370c87aa82b4c58cc72a7ff9302e13e1856"
+        },
+        {
+          "runtime": "win-x64",
+          "abstraction": "6.0.0",
+          "url": "https://github.com/leo-maxwell/ShokoRelay/releases/download/v0.17.4-dev.1002/ShokoRelay-v0.17.4-dev.1002_win-x64.zip",
+          "checksum": "sha256:e9c0c61bd7d719d64f3e220088892d45d326c50b796261d9c2cdebdc15461a4b"
+        }
+      ]
+    },
+    {
       "version": "0.17.4-dev.1001",
       "tag": "v0.17.4-dev.1001",
       "source_revision": "25c3fd4173484bbf1724571e9cb10384f8da9249",
