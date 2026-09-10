@@ -1,5 +1,5 @@
-name: Build & Release ShokoRelay
-run-name: "${{ github.event_name == 'workflow_dispatch' && format('Manual Build: {0}', github.event.inputs.tag_name) || format('{0}', github.event.release.name || github.event.release.tag_name) }}"
+name: Build & Release Subtitle Test
+run-name: "Subtitle test ${{ github.event.inputs.tag_name || github.event.release.tag_name }}"
 
 on:
   release:
@@ -7,15 +7,69 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: "Tag or branch to build from (e.g. v1.0.0 or master)"
+        description: "Published testing prerelease tag (for example v0.17.4-dev.1001)"
         required: true
 
 permissions:
   contents: write
 
+concurrency:
+  group: subtitle-rename-release
+  cancel-in-progress: false
+
 jobs:
+  verify:
+    name: Verify testing release
+    if: github.repository == 'leo-maxwell/ShokoRelay'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      assembly_version: ${{ steps.version.outputs.assembly_version }}
+      source_revision: ${{ steps.version.outputs.source_revision }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.inputs.tag_name || github.event.release.tag_name }}
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "10.0.x"
+      - name: Validate version and branch ancestry
+        id: version
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.inputs.tag_name || github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)-dev\.([1-9][0-9]{3,4})$ ]]; then
+            echo "Expected a testing tag such as v0.17.4-dev.1001."
+            exit 1
+          fi
+          BASE_VERSION="${BASH_REMATCH[1]}"
+          REVISION="${BASH_REMATCH[2]}"
+          if (( REVISION < 1001 || REVISION > 65534 )); then
+            echo "Testing revisions must be between 1001 and 65534."
+            exit 1
+          fi
+          CODE_VERSION=$(sed -n 's/.*public const string Version = "\([^"]*\)";.*/\1/p' ShokoRelay/ShokoRelayConstants.cs)
+          test "$BASE_VERSION" = "$CODE_VERSION"
+          test "$(gh release view "$TAG" --json isPrerelease --jq .isPrerelease)" = true
+          git merge-base --is-ancestor origin/subtitle-rename HEAD
+          git merge-base --is-ancestor HEAD origin/subtitle-rename-testing
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "assembly_version=$BASE_VERSION.$REVISION" >> "$GITHUB_OUTPUT"
+          echo "source_revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Restore
+        run: dotnet restore ShokoRelay.slnx
+      - name: Build
+        run: dotnet build ShokoRelay.slnx --no-restore -c Release
+      - name: Test
+        run: dotnet test ShokoRelay.Tests/ShokoRelay.Tests.csproj --no-build --no-restore -c Release
+
   publish:
     name: Build & attach ${{ matrix.rid }}
+    needs: verify
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -39,54 +93,24 @@ jobs:
         with:
           dotnet-version: "10.0.x"
 
-      - name: Set Version Variables
-        id: vars
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          TAG="${{ github.event.inputs.tag_name || github.event.release.tag_name }}"
-
-          # Check if the input/release reference looks like a standard tag (e.g. starts with v)
-          if [[ "$TAG" =~ ^v[0-9] ]]; then
-            echo "is_tag=true" >> $GITHUB_OUTPUT
-            VERSION="${TAG#v}"
-            # Strip the 4th digit (revision) for filenames (1.0.0.1 -> 1.0.0)
-            VERSION_BASE=$(echo "$VERSION" | cut -d'.' -f1-3)
-
-            # Determine if this is a pre-release (Dev channel)
-            if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-              IS_PRERELEASE=$(gh release view "$TAG" --repo "${{ github.repository }}" --json isPrerelease -q .isPrerelease)
-            else
-              IS_PRERELEASE="${{ github.event.release.prerelease }}"
-            fi
-
-            if [[ "$IS_PRERELEASE" == "true" ]]; then
-              echo "file_ver=v${VERSION_BASE}-dev" >> $GITHUB_OUTPUT
-              echo "is_dev=true" >> $GITHUB_OUTPUT
-            else
-              echo "file_ver=v${VERSION_BASE}" >> $GITHUB_OUTPUT
-              echo "is_dev=false" >> $GITHUB_OUTPUT
-            fi
-          else
-            # Fallback for branch-based test builds
-            echo "is_tag=false" >> $GITHUB_OUTPUT
-            echo "file_ver=$TAG" >> $GITHUB_OUTPUT
-            echo "is_dev=true" >> $GITHUB_OUTPUT
-          fi
-
       - name: Publish
-        run: dotnet publish ShokoRelay/ShokoRelay.csproj -c Release -r ${{ matrix.rid }} --no-self-contained -o publish
+        run: >-
+          dotnet publish ShokoRelay/ShokoRelay.csproj -c Release
+          -r ${{ matrix.rid }} --no-self-contained -o publish
+          -p:AssemblyVersion=${{ needs.verify.outputs.assembly_version }}
+          -p:FileVersion=${{ needs.verify.outputs.assembly_version }}
+          -p:InformationalVersion=${{ needs.verify.outputs.version }}
+          -p:RepositoryUrl=https://github.com/leo-maxwell/ShokoRelay
         env:
           DOTNET_CLI_TELEMETRY_OPTOUT: "1"
-          RELEASE_CHANNEL: ${{ steps.vars.outputs.is_dev == 'true' && 'Dev' || 'Stable' }}
+          RELEASE_CHANNEL: Dev
 
       - name: Package ZIP (Linux)
         if: runner.os == 'Linux'
         id: pkg_linux
         shell: bash
         run: |
-          ZIP_NAME="ShokoRelay-${{ steps.vars.outputs.file_ver }}_${{ matrix.rid }}.zip"
+          ZIP_NAME="ShokoRelay-v${{ needs.verify.outputs.version }}_${{ matrix.rid }}.zip"
           cd publish
           zip -r "../$ZIP_NAME" .
           echo "zip_path=$ZIP_NAME" >> $GITHUB_OUTPUT
@@ -96,53 +120,45 @@ jobs:
         id: pkg_win
         shell: pwsh
         run: |
-          $ZipName = "ShokoRelay-${{ steps.vars.outputs.file_ver }}_${{ matrix.rid }}.zip"
+          $ZipName = "ShokoRelay-v${{ needs.verify.outputs.version }}_${{ matrix.rid }}.zip"
           Compress-Archive -Path publish\* -DestinationPath "$env:GITHUB_WORKSPACE\$ZipName" -Force
           echo "zip_path=$ZipName" >> $env:GITHUB_OUTPUT
 
       - name: Upload asset to GitHub Release
-        if: steps.vars.outputs.is_tag == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.event.inputs.tag_name || github.event.release.tag_name }}
           ZIP_PATH: ${{ runner.os == 'Windows' && steps.pkg_win.outputs.zip_path || steps.pkg_linux.outputs.zip_path }}
         run: |
-          gh release upload "$TAG" "$ZIP_PATH" --clobber
-
-      - name: Upload Artifacts
-        if: steps.vars.outputs.is_tag == 'false'
-        uses: actions/upload-artifact@v7
-        with:
-          name: ShokoRelay-${{ steps.vars.outputs.file_ver }}-${{ matrix.rid }}
-          path: ${{ runner.os == 'Windows' && steps.pkg_win.outputs.zip_path || steps.pkg_linux.outputs.zip_path }}
+          gh release upload "$TAG" "$ZIP_PATH"
 
   update-manifest:
-    name: Update plugin manifest
-    needs: [publish]
-    # Run if triggered by release (published) or tag dispatch.
-    if: startsWith(github.event.inputs.tag_name, 'v') || github.event_name == 'release'
+    name: Update testing manifest
+    needs: [verify, publish]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: subtitle-rename-testing
           fetch-depth: 0
 
       - name: Update Manifest
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.inputs.tag_name || github.event.release.tag_name }}
+          VERSION: ${{ needs.verify.outputs.version }}
+          SOURCE_REVISION: ${{ needs.verify.outputs.source_revision }}
         run: |
-          TAG="${{ github.event.inputs.tag_name || github.event.release.tag_name }}"
-          VERSION="${TAG#v}"
-          SOURCE_REVISION=$(git rev-list -n 1 "$TAG")
+          set -euo pipefail
 
           # Extract Shoko.Abstractions version dynamically from csproj
-          ABSTRACTION_VERSION=$(grep -oP 'PackageReference Include="Shoko\.Abstractions" Version="\K[^"]+' ShokoRelay/ShokoRelay.csproj | head -1)
+          ABSTRACTION_VERSION=$(git show "$SOURCE_REVISION:ShokoRelay/ShokoRelay.csproj" | sed -n 's/.*Include="Shoko.Abstractions" Version="\([^"]*\)".*/\1/p')
           if [ -z "$ABSTRACTION_VERSION" ]; then
             echo "Error: Missing Shoko.Abstractions version in ShokoRelay.csproj"
             exit 1
           fi
-          ABSTRACTION_VERSION=$(echo "$ABSTRACTION_VERSION" | cut -d'-' -f1) # Strip the pre-release suffix for manifest compatibility (Remove if pre-release versions are supported in the future)
+          ABSTRACTION_VERSION="${ABSTRACTION_VERSION%%-*}"
 
           # Fetch release metadata from API (including the body for release_notes)
           RELEASE_DATA=$(gh release view "$TAG" --repo "${{ github.repository }}" --json publishedAt,isPrerelease,body)
@@ -152,13 +168,12 @@ jobs:
           CHANNEL=$([[ "$IS_PRERELEASE" == "true" ]] && echo "Dev" || echo "Stable")
 
           # Download all release assets
-          gh release download "$TAG" --repo "${{ github.repository }}" --pattern "ShokoRelay-v*.zip"
+          gh release download "$TAG" --repo "${{ github.repository }}" --pattern "ShokoRelay-v${VERSION}_*.zip"
 
           # Build archives JSON array
           ARCHIVES_JSON="[]"
-          shopt -s nullglob
-          for ZIP in ShokoRelay-v*.zip; do
-            RID=$(echo "$ZIP" | sed -E 's/.*_(.*)\.zip/\1/')
+          for RID in linux-arm64 linux-x64 win-x64; do
+            ZIP="ShokoRelay-v${VERSION}_${RID}.zip"
             CHECKSUM="sha256:$(sha256sum "$ZIP" | awk '{ print $1 }')"
             URL="https://github.com/${{ github.repository }}/releases/download/${TAG}/${ZIP}"
             ARCHIVE_ENTRY=$(jq -n \
@@ -193,5 +208,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add manifest.json
-          git commit -m "ci: update manifest for ${TAG}"
-          git push origin HEAD:master
+          git commit -m "ci: update subtitle testing manifest for ${TAG}"
+          git push origin HEAD:subtitle-rename-testing
