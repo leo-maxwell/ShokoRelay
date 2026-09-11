@@ -95,7 +95,61 @@ public class SubtitleLinkingTests : IDisposable
             Assert.Equal(extension, File.ReadAllText(Path.Combine(sourceDir, "Episode.chs." + extension)));
     }
 
-    private static void Refresh(string video, string destDir, IReadOnlyList<SubtitleRenameRule> rules, IReadOnlyList<string>? formats = null)
+    [Theory]
+    [InlineData("_en.srt")]
+    [InlineData("-en.srt")]
+    [InlineData(" [English].ass")]
+    public void EmptyRulesPreserveLegacySidecarNamesThroughCleanup(string suffix)
+    {
+        string sourceDir = Directory.CreateDirectory(Path.Combine(_root, "source")).FullName;
+        string destDir = Directory.CreateDirectory(Path.Combine(_root, "vfs")).FullName;
+        string video = Path.Combine(sourceDir, "Episode.mkv");
+        string subtitle = Path.Combine(sourceDir, "Episode" + suffix);
+        File.WriteAllText(video, "video fixture");
+        File.WriteAllText(subtitle, "subtitle fixture");
+        Refresh(video, destDir, []);
+        Assert.Equal("S01E01" + suffix, Assert.Single(Names(destDir)));
+        Assert.Equal(subtitle, File.ResolveLinkTarget(Path.Combine(destDir, "S01E01" + suffix), true)!.FullName);
+    }
+
+    [Theory]
+    [InlineData(6, 300, false)]
+    [InlineData(6, 300, true)]
+    [InlineData(247, 7, false)]
+    [InlineData(247, 7, true)]
+    public void RejectedConversionNamesRetainUsableSubtitlesAcrossRefreshes(int baseLength, int suffixLength, bool skipExistenceCheck)
+    {
+        string sourceDir = Directory.CreateDirectory(Path.Combine(_root, "source")).FullName;
+        string destDir = Directory.CreateDirectory(Path.Combine(_root, "vfs")).FullName;
+        string video = Path.Combine(sourceDir, "Episode.mkv");
+        string subtitle = Path.Combine(sourceDir, "Episode.chs.ass");
+        File.WriteAllText(video, "video fixture");
+        File.WriteAllText(subtitle, "subtitle fixture");
+        string destBase = new('E', baseLength);
+        string longSuffix = new('x', suffixLength);
+        var rules = SubtitleRenameRule.Normalize([
+            new() { OriginalSuffix = "chs", FinalSuffix = longSuffix },
+            new() { OriginalSuffix = "chs", FinalSuffix = longSuffix + "y" },
+            new() { OriginalSuffix = "chs", FinalSuffix = "ja" },
+        ]);
+
+        Refresh(video, destDir, [], destBase: destBase);
+        foreach (bool skipCheck in new[] { skipExistenceCheck, false })
+        {
+            Refresh(video, destDir, rules, destBase: destBase, skipExistenceCheck: skipCheck);
+            Assert.Equal([destBase + ".chs.ass", destBase + ".ja.ass"], Names(destDir));
+            foreach (string name in Names(destDir))
+                Assert.Equal(subtitle, File.ResolveLinkTarget(Path.Combine(destDir, name), true)!.FullName);
+        }
+
+        Refresh(video, destDir, [rules[2]], destBase: destBase);
+        Assert.Equal(destBase + ".ja.ass", Assert.Single(Names(destDir)));
+        Refresh(video, destDir, [], destBase: destBase);
+        Assert.Equal(destBase + ".chs.ass", Assert.Single(Names(destDir)));
+        Assert.Equal("subtitle fixture", File.ReadAllText(subtitle));
+    }
+
+    private static void Refresh(string video, string destDir, IReadOnlyList<SubtitleRenameRule> rules, IReadOnlyList<string>? formats = null, string destBase = "S01E01", bool skipExistenceCheck = false)
     {
         var linker = new VfsAssetLinker(null!); // Video service is only used by local-extra discovery.
         var cache = new ConcurrentDictionary<string, Lazy<string[]>>(StringComparer.Ordinal);
@@ -107,7 +161,7 @@ public class SubtitleLinkingTests : IDisposable
         linker.LinkEpisodeMetadata(
             video,
             Path.GetDirectoryName(video)!,
-            "S01E01",
+            destBase,
             destDir,
             cache,
             ref planned,
@@ -115,6 +169,7 @@ public class SubtitleLinkingTests : IDisposable
             errors,
             ref created,
             (name, _) => expected.Add(Path.Combine(destDir, name)),
+            skipExistenceCheck: skipExistenceCheck,
             subtitleRules: rules,
             subtitleFormats: formats ?? []
         );

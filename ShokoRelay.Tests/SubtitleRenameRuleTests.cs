@@ -172,6 +172,112 @@ public class SubtitleRenameRuleTests
         }
     }
 
+    [Theory]
+    [InlineData("""["ass",123,true,{},[],null,".SRT"]""", "ass,srt")]
+    [InlineData("\"ass,srt\"", "")]
+    [InlineData("123", "")]
+    [InlineData("true", "")]
+    [InlineData("{}", "")]
+    public void MalformedFormatPreferencesDoNotResetRulesOrOtherSettings(string preferences, string expected)
+    {
+        string root = Path.Combine(AppContext.BaseDirectory, "config-test-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var provider = new ConfigProvider(new TestApplicationPaths(root));
+            string path = Path.Combine(provider.ConfigDirectory, ShokoRelayConstants.FilePreferences);
+            File.WriteAllText(
+                path,
+                $$$"""
+                {"SeriesTitleLanguage":"EN","Advanced":{"VfsRootPath":"!CustomVFS",
+                 "SubtitleRenameRules":[{"OriginalSuffix":"chs","FinalSuffix":"zh-Hans"}],
+                 "SubtitleFormatPreference":{{{preferences}}}}}
+                """
+            );
+            var loaded = provider.GetSettings();
+            Assert.Equal("EN", loaded.SeriesTitleLanguage);
+            Assert.Equal("!CustomVFS", loaded.Advanced.VfsRootPath);
+            Assert.Equal("zh-Hans", Assert.Single(loaded.Advanced.SubtitleRenameRules).FinalSuffix);
+            Assert.Equal(expected, string.Join(',', loaded.Advanced.SubtitleFormatPreference));
+
+            provider.SaveSettings(loaded);
+            var saved = JsonSerializer.Deserialize<RelayConfig>(File.ReadAllText(path))!;
+            Assert.Equal("!CustomVFS", saved.Advanced.VfsRootPath);
+            Assert.Equal("EN", saved.SeriesTitleLanguage);
+            Assert.Equal("zh-Hans", Assert.Single(saved.Advanced.SubtitleRenameRules).FinalSuffix);
+            Assert.Equal(expected, string.Join(',', saved.Advanced.SubtitleFormatPreference));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, true);
+        }
+    }
+
+    [Theory]
+    [InlineData("\"chs zh-Hans\"")]
+    [InlineData("123")]
+    [InlineData("true")]
+    [InlineData("{}")]
+    [InlineData("""["chs"]""")]
+    [InlineData( /*lang=json,strict*/
+        """[{"OriginalSuffix":123,"FinalSuffix":"zh-Hans"}]"""
+    )]
+    [InlineData( /*lang=json,strict*/
+        """[{"OriginalSuffix":"chs","FinalSuffix":{}}]"""
+    )]
+    [InlineData( /*lang=json,strict*/
+        """[{"OriginalSuffix":"chs","FinalSuffix":"zh-Hans"},17]"""
+    )]
+    [InlineData("[null]")]
+    public void MalformedRulesDisableOnlySubtitleConversion(string rules)
+    {
+        string root = Path.Combine(AppContext.BaseDirectory, "config-test-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var provider = new ConfigProvider(new TestApplicationPaths(root));
+            File.WriteAllText(
+                Path.Combine(provider.ConfigDirectory, ShokoRelayConstants.FilePreferences),
+                $$$"""
+                {"SeriesTitleLanguage":"EN","Advanced":{"VfsRootPath":"!CustomVFS",
+                 "SubtitleFormatPreference":["srt"],"SubtitleRenameRules":{{{rules}}}}}
+                """
+            );
+            var loaded = provider.GetSettings();
+            Assert.Empty(loaded.Advanced.SubtitleRenameRules);
+            Assert.Equal("EN", loaded.SeriesTitleLanguage);
+            Assert.Equal("!CustomVFS", loaded.Advanced.VfsRootPath);
+            Assert.Equal(["srt"], loaded.Advanced.SubtitleFormatPreference);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, true);
+        }
+    }
+
+    [Fact]
+    public void FileLoadingPreservesMissingSubtitleDefaultsAndTrailingCommas()
+    {
+        string root = Path.Combine(AppContext.BaseDirectory, "config-test-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var provider = new ConfigProvider(new TestApplicationPaths(root));
+            File.WriteAllText(
+                Path.Combine(provider.ConfigDirectory, ShokoRelayConstants.FilePreferences), /*lang=json*/
+                """{"SeriesTitleLanguage":"EN","Advanced":{},}"""
+            );
+            var loaded = provider.GetSettings();
+            Assert.Empty(loaded.Advanced.SubtitleRenameRules);
+            Assert.Equal(["ass", "ssa", "srt", "vtt", "smi"], loaded.Advanced.SubtitleFormatPreference);
+            Assert.Equal("EN", loaded.SeriesTitleLanguage);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, true);
+        }
+    }
+
     private sealed class TestApplicationPaths(string root) : IApplicationPaths
     {
         public string ApplicationPath => root;
