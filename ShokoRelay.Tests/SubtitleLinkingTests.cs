@@ -1,98 +1,140 @@
 using System.Collections.Concurrent;
+using System.Reflection;
 using ShokoRelay.Config;
 using ShokoRelay.Vfs;
 
 namespace ShokoRelay.Tests;
 
+[CollectionDefinition("Subtitle linking", DisableParallelization = true)]
+public sealed class SubtitleLinkingCollection;
+
+[Collection("Subtitle linking")]
 public class SubtitleLinkingTests : IDisposable
 {
-    private readonly string _root = Path.Combine(AppContext.BaseDirectory, "shokorelay-subtitles-" + Guid.NewGuid().ToString("N"));
+    private readonly string _root = Path.Combine(AppContext.BaseDirectory, "subtitles-" + Guid.NewGuid().ToString("N"));
+    private readonly FieldInfo _providerField = typeof(ShokoRelay).GetField("s_configProvider", BindingFlags.Static | BindingFlags.NonPublic)!;
+    private readonly object? _previousProvider;
+    private readonly RelayConfig _settings;
+    private readonly string _sourceDir;
+    private readonly string _destDir;
+    private readonly string _video;
 
-    [Fact]
-    public void MultipleOutputsAreLinksToTheSameOriginalAndRefreshRemovesObsoleteNames()
+    public SubtitleLinkingTests()
     {
-        string sourceDir = Directory.CreateDirectory(Path.Combine(_root, "source")).FullName;
-        string destDir = Directory.CreateDirectory(Path.Combine(_root, "vfs")).FullName;
-        string video = Path.Combine(sourceDir, "Episode.mkv");
-        string bilingual = Path.Combine(sourceDir, "Episode.scjp.ass");
-        string chinese = Path.Combine(sourceDir, "Episode.chs.ass");
-        File.WriteAllText(video, "video fixture");
-        File.WriteAllText(bilingual, "bilingual fixture");
-        File.WriteAllText(chinese, "Chinese fixture");
-        var rules = new List<SubtitleRenameRule>
-        {
-            new() { OriginalSuffix = "scjp", FinalSuffix = "zh-Hans" },
-            new() { OriginalSuffix = "scjp", FinalSuffix = "ja" },
-            new() { OriginalSuffix = "chs", FinalSuffix = "zh-Hans" },
-        };
-
-        Refresh(video, destDir, []);
-        Assert.Equal(["S01E01.chs.ass", "S01E01.scjp.ass"], Names(destDir));
-
-        Refresh(video, destDir, rules);
-        Assert.Equal(["S01E01.ja.ass", "S01E01.zh-Hans.ass"], Names(destDir));
-        Assert.Equal(bilingual, File.ResolveLinkTarget(Path.Combine(destDir, "S01E01.ja.ass"), true)!.FullName);
-        Assert.Equal(bilingual, File.ResolveLinkTarget(Path.Combine(destDir, "S01E01.zh-Hans.ass"), true)!.FullName);
-
-        Refresh(video, destDir, rules);
-        Assert.Equal(["S01E01.ja.ass", "S01E01.zh-Hans.ass"], Names(destDir));
-
-        (rules[0], rules[2]) = (rules[2], rules[0]);
-        Refresh(video, destDir, rules);
-        Assert.Equal(chinese, File.ResolveLinkTarget(Path.Combine(destDir, "S01E01.zh-Hans.ass"), true)!.FullName);
-        Assert.Equal(bilingual, File.ResolveLinkTarget(Path.Combine(destDir, "S01E01.ja.ass"), true)!.FullName);
-
-        Refresh(video, destDir, []);
-        Assert.Equal(["S01E01.chs.ass", "S01E01.scjp.ass"], Names(destDir));
-        Assert.Equal("bilingual fixture", File.ReadAllText(bilingual));
-        Assert.Equal("Chinese fixture", File.ReadAllText(chinese));
-        Assert.Equal("video fixture", File.ReadAllText(video));
+        _sourceDir = Directory.CreateDirectory(Path.Combine(_root, "source")).FullName;
+        _destDir = Directory.CreateDirectory(Path.Combine(_root, "vfs")).FullName;
+        _video = Add("Episode.mkv");
+        var provider = new ConfigProvider(new TestApplicationPaths(_root));
+        _settings = provider.GetSettings();
+        _previousProvider = _providerField.GetValue(null);
+        _providerField.SetValue(null, provider);
     }
 
-    [CaseSensitiveFileSystemFact]
-    public void CaseOnlyDuplicatesAreLinkedAsIsAndSurviveCleanup()
-    {
-        string sourceDir = Directory.CreateDirectory(Path.Combine(_root, "source")).FullName;
-        string destDir = Directory.CreateDirectory(Path.Combine(_root, "vfs")).FullName;
-        string video = Path.Combine(sourceDir, "Episode.mkv");
-        File.WriteAllText(video, "video fixture");
-        foreach (string suffix in new[] { "SCJP", "scjp", "ScJp", "chs" })
-            File.WriteAllText(Path.Combine(sourceDir, $"Episode.{suffix}.ass"), suffix);
-        var rules = new List<SubtitleRenameRule>
+    private static OrderedDictionary<string, string> Mappings =>
+        new()
         {
-            new() { OriginalSuffix = "scjp", FinalSuffix = "zh-Hans" },
-            new() { OriginalSuffix = "scjp", FinalSuffix = "ja" },
-            new() { OriginalSuffix = "chs", FinalSuffix = "zh-Hans" },
+            ["chs"] = "zh-Hans",
+            ["sc"] = "zh-Hans",
+            ["cht"] = "zh-Hant",
+            ["scjp"] = "zh-Hans",
         };
-        Refresh(video, destDir, rules);
-        Assert.Equal(["S01E01.SCJP.ass", "S01E01.ScJp.ass", "S01E01.scjp.ass", "S01E01.zh-Hans.ass"], Names(destDir));
-        foreach (string suffix in new[] { "SCJP", "scjp", "ScJp" })
-            Assert.Equal(suffix, File.ReadAllText(Path.Combine(destDir, $"S01E01.{suffix}.ass")));
+
+    [Theory]
+    [InlineData(new[] { "sc.ass", "chs.ass", "zh-Hans.ass" }, new[] { "zh-Hans.ass=zh-Hans.ass" })]
+    [InlineData(new[] { "sc.ass", "chs.ass" }, new[] { "zh-Hans.ass=chs.ass" })]
+    [InlineData(new[] { "sc.ass" }, new[] { "zh-Hans.ass=sc.ass" })]
+    [InlineData(new[] { "sc.ass", "chs.srt" }, new[] { "zh-Hans.ass=sc.ass", "zh-Hans.srt=chs.srt" })]
+    [InlineData(new[] { "chs.ass", "chs.srt", "zh-Hans.srt" }, new[] { "zh-Hans.ass=chs.ass", "zh-Hans.srt=zh-Hans.srt" })]
+    [InlineData(new[] { "chs.ass", "sc.forced.ass", "chs.forced.ass" }, new[] { "zh-Hans.ass=chs.ass", "zh-Hans.forced.ass=chs.forced.ass" })]
+    [InlineData(new[] { "CHS.ASS", "sC.srt", "CHT.vtt" }, new[] { "zh-Hans.ASS=CHS.ASS", "zh-Hans.srt=sC.srt", "zh-Hant.vtt=CHT.vtt" })]
+    [InlineData(new[] { "CHS.ass", "ZH-HANS.ASS" }, new[] { "ZH-HANS.ASS=ZH-HANS.ASS" })]
+    [InlineData(new[] { "scjp.ass", "cht.ass" }, new[] { "zh-Hans.ass=scjp.ass", "zh-Hant.ass=cht.ass" })]
+    [InlineData(new[] { "en.ass", "chs2.ass", "chsjp.ass" }, new[] { "chs2.ass=chs2.ass", "chsjp.ass=chsjp.ass", "en.ass=en.ass" })]
+    public void SelectsSourcesByCompleteDestinationRegardlessOfDirectoryOrder(string[] suffixes, string[] expected)
+    {
+        var sources = suffixes.Select(s => Add("Episode." + s)).ToArray();
+        Assert.Equal(expected, Refresh(Mappings, sources));
+        Assert.Equal(expected, Refresh(Mappings, sources.Reverse()));
     }
 
     [Fact]
-    public void ChangingFormatPreferenceReplacesLinksWithoutEnablingUnsupportedFormats()
+    public void ReorderingAndClearingMappingsUpdatesLinksAndPreservesSources()
     {
-        string sourceDir = Directory.CreateDirectory(Path.Combine(_root, "source")).FullName;
-        string destDir = Directory.CreateDirectory(Path.Combine(_root, "vfs")).FullName;
-        string video = Path.Combine(sourceDir, "Episode.mkv");
-        File.WriteAllText(video, "video fixture");
-        string[] extensions = ["ass", "srt", "sub", "sup"];
-        foreach (string extension in extensions)
-            File.WriteAllText(Path.Combine(sourceDir, "Episode.chs." + extension), extension);
-        SubtitleRenameRule[] rules = [new() { OriginalSuffix = "chs", FinalSuffix = "zh-Hans" }];
+        string chs = Add("Episode.chs.ass");
+        string sc = Add("Episode.sc.ass");
+        Assert.Equal(["zh-Hans.ass=chs.ass"], Refresh(Mappings));
+        Assert.Equal(["zh-Hans.ass=sc.ass"], Refresh(new() { ["sc"] = "zh-Hans", ["chs"] = "zh-Hans" }));
+        Assert.Equal(["zh-Hans.ass=sc.ass"], Refresh(new() { ["sc"] = "zh-Hans", ["chs"] = "zh-Hans" }));
+        Assert.Equal(["chs.ass=chs.ass", "sc.ass=sc.ass"], Refresh([]));
+        Assert.Equal("Episode.chs.ass", File.ReadAllText(chs));
+        Assert.Equal("Episode.sc.ass", File.ReadAllText(sc));
+        Assert.Equal("Episode.mkv", File.ReadAllText(_video));
+    }
 
-        foreach (string[] formats in new string[][] { [], ["srt"], [] })
-        {
-            Refresh(video, destDir, rules, formats);
-            string extension = formats.Length == 0 ? "ass" : "srt";
-            string name = Assert.Single(Names(destDir));
-            Assert.Equal("S01E01.zh-Hans." + extension, name);
-            Assert.Equal(Path.Combine(sourceDir, "Episode.chs." + extension), File.ResolveLinkTarget(Path.Combine(destDir, name), true)!.FullName);
-        }
+    [Fact]
+    public void PreservesEverySupportedFormatWithoutEnablingOtherFormats()
+    {
+        foreach (string extension in new[] { "ass", "ssa", "srt", "vtt", "smi", "sub", "sup" })
+            Add("Episode.chs." + extension);
+        Assert.Equal(["zh-Hans.ass=chs.ass", "zh-Hans.smi=chs.smi", "zh-Hans.srt=chs.srt", "zh-Hans.ssa=chs.ssa", "zh-Hans.vtt=chs.vtt"], Refresh(Mappings));
+    }
 
-        foreach (string extension in extensions)
-            Assert.Equal(extension, File.ReadAllText(Path.Combine(sourceDir, "Episode.chs." + extension)));
+    [Theory]
+    [InlineData("forced")]
+    [InlineData("FORCED")]
+    [InlineData("sdh")]
+    [InlineData("cc")]
+    public void PreservesFlagsEvenWhenAConfigurationKeyNamesOne(string flag)
+    {
+        Add("Episode.chs." + flag + ".ass");
+        Assert.Equal([$"zh-Hans.{flag}.ass=chs.{flag}.ass"], Refresh(new() { [flag] = "wrong", ["chs"] = "zh-Hans" }));
+    }
+
+    [Fact]
+    public void MapsMultipleTokensOnceAndUsesTheirEarliestRuleForCollisions()
+    {
+        Add("Episode.chs.jp.ass");
+        Add("Episode.sc.ja.ass");
+        Assert.Equal(
+            ["zh-Hans.ja.ass=chs.jp.ass"],
+            Refresh(
+                new()
+                {
+                    ["jp"] = "ja",
+                    ["sc"] = "zh-Hans",
+                    ["chs"] = "zh-Hans",
+                }
+            )
+        );
+    }
+
+    [Fact]
+    public void ReplacementsDoNotChainOrDuplicateASource()
+    {
+        Add("Episode.chs.ass");
+        Assert.Equal(["zh-Hans.ass=chs.ass"], Refresh(new() { ["chs"] = "zh-Hans", ["zh-Hans"] = "ja" }));
+        Add("Episode.zh-Hans.ass");
+        Assert.Equal(["ja.ass=zh-Hans.ass", "zh-Hans.ass=chs.ass"], Refresh(new() { ["chs"] = "zh-Hans", ["zh-Hans"] = "ja" }));
+    }
+
+    [Fact]
+    public void CircularAndIdentityMappingsStillProduceAtMostOneLinkPerSource()
+    {
+        Add("Episode.chs.ass");
+        Add("Episode.zh-Hans.srt");
+        Assert.Equal(["chs.srt=zh-Hans.srt", "zh-Hans.ass=chs.ass"], Refresh(new() { ["chs"] = "zh-Hans", ["zh-Hans"] = "chs" }));
+        Assert.Equal(["chs.ass=chs.ass", "zh-Hans.srt=zh-Hans.srt"], Refresh(new() { ["chs"] = "CHS" }));
+    }
+
+    [Theory]
+    [InlineData(".nfo")]
+    [InlineData(".jpg")]
+    [InlineData(".png")]
+    [InlineData(".NFO")]
+    public void LeavesOtherSidecarsUntouched(string extension)
+    {
+        Add("Episode.chs" + extension);
+        Assert.Equal([$"chs{extension}=chs{extension}"], Refresh(Mappings));
     }
 
     [Theory]
@@ -102,91 +144,90 @@ public class SubtitleLinkingTests : IDisposable
     [InlineData("[English].ass")]
     [InlineData("(English).srt")]
     [InlineData("+en.srt")]
-    public void LegacySidecarNamesSurviveRulesAndCleanup(string suffix)
+    [InlineData(".srt")]
+    public void PreservesLegacyAndSuffixlessSubtitles(string suffix)
     {
-        string sourceDir = Directory.CreateDirectory(Path.Combine(_root, "source")).FullName;
-        string destDir = Directory.CreateDirectory(Path.Combine(_root, "vfs")).FullName;
-        string video = Path.Combine(sourceDir, "Episode.mkv");
-        string subtitle = Path.Combine(sourceDir, "Episode" + suffix);
-        File.WriteAllText(video, "video fixture");
-        File.WriteAllText(subtitle, "subtitle fixture");
-        foreach (SubtitleRenameRule[] rules in new SubtitleRenameRule[][] { [], [new() { OriginalSuffix = "chs", FinalSuffix = "zh-Hans" }], [] })
+        Add("Episode" + suffix);
+        foreach (var mappings in new[] { Mappings, [], null! })
         {
-            Refresh(video, destDir, rules);
-            Assert.Equal("S01E01" + suffix, Assert.Single(Names(destDir)));
-            Assert.Equal(subtitle, File.ResolveLinkTarget(Path.Combine(destDir, "S01E01" + suffix), true)!.FullName);
+            Refresh(mappings);
+            Assert.Equal("S01E01" + suffix, Assert.Single(Directory.EnumerateFiles(_destDir).Select(Path.GetFileName)));
         }
     }
 
-    [Theory]
-    [InlineData("missing")]
-    [InlineData("cycle")]
-    [InlineData("directory")]
-    public void UnavailablePreferredSubtitleDoesNotDisplaceAnAvailableFormat(string targetKind)
+    [Fact]
+    public void DoesNotClaimSubtitlesFromLongerVideoBasenames()
     {
-        string sourceDir = Directory.CreateDirectory(Path.Combine(_root, "source")).FullName;
-        string destDir = Directory.CreateDirectory(Path.Combine(_root, "vfs")).FullName;
-        string video = Path.Combine(sourceDir, "Episode.mkv");
-        string ass = Path.Combine(sourceDir, "Episode.chs.ass");
-        string srt = Path.Combine(sourceDir, "Episode.chs.srt");
-        File.WriteAllText(video, "video fixture");
-        File.WriteAllText(srt, "SRT fixture");
-        File.CreateSymbolicLink(ass, targetKind == "directory" ? "." : "unavailable");
-        if (targetKind == "cycle")
-            File.CreateSymbolicLink(Path.Combine(sourceDir, "unavailable"), "Episode.chs.ass");
-        SubtitleRenameRule[] rules = [new() { OriginalSuffix = "chs", FinalSuffix = "zh-Hans" }];
-
-        Refresh(video, destDir, []);
-        Assert.Equal("S01E01.chs.srt", Assert.Single(Names(destDir)));
-        Refresh(video, destDir, rules);
-        Assert.Equal("S01E01.zh-Hans.srt", Assert.Single(Names(destDir)));
-        Assert.Equal("SRT fixture", File.ReadAllText(Path.Combine(destDir, "S01E01.zh-Hans.srt")));
-
-        File.Delete(ass);
-        File.WriteAllText(ass, "ASS fixture");
-        Refresh(video, destDir, rules);
-        Assert.Equal("S01E01.zh-Hans.ass", Assert.Single(Names(destDir)));
-        Assert.Equal("ASS fixture", File.ReadAllText(Path.Combine(destDir, "S01E01.zh-Hans.ass")));
-        Assert.Equal("SRT fixture", File.ReadAllText(srt));
+        Add("Episode.chs.ass");
+        Add("Episode2.chs.ass");
+        Add("EpisodeExtra.en.srt");
+        Assert.Equal(["zh-Hans.ass=chs.ass"], Refresh(Mappings));
+        Assert.Equal(["chs.ass=chs.ass"], Refresh([]));
     }
 
     [Theory]
-    [InlineData("scjp")]
-    [InlineData("zh-Hans")]
-    public void UnavailableSourceOrExistingTargetAllowsTheNextSource(string unavailableSuffix)
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("../escape")]
+    [InlineData("zh.Hans")]
+    [InlineData("zh/Hans")]
+    [InlineData("zh\0Hans")]
+    public void InvalidReplacementTokensLeaveOriginalSubtitleUsable(string? value)
     {
-        string sourceDir = Directory.CreateDirectory(Path.Combine(_root, "source")).FullName;
-        string destDir = Directory.CreateDirectory(Path.Combine(_root, "vfs")).FullName;
-        string video = Path.Combine(sourceDir, "Episode.mkv");
-        File.WriteAllText(video, "video fixture");
-        File.WriteAllText(Path.Combine(sourceDir, "Episode.chs.srt"), "available fixture");
-        File.CreateSymbolicLink(Path.Combine(sourceDir, "Episode." + unavailableSuffix + ".ass"), "missing");
-        SubtitleRenameRule[] rules =
-        [
-            new() { OriginalSuffix = "scjp", FinalSuffix = "zh-Hans" },
-            new() { OriginalSuffix = "scjp", FinalSuffix = "ja" },
-            new() { OriginalSuffix = "chs", FinalSuffix = "zh-Hans" },
-        ];
-        Refresh(video, destDir, rules);
-        Assert.Equal("S01E01.zh-Hans.srt", Assert.Single(Names(destDir)));
-        Assert.Equal("available fixture", File.ReadAllText(Path.Combine(destDir, "S01E01.zh-Hans.srt")));
+        Add("Episode.chs.ass");
+        Assert.Equal(["chs.ass=chs.ass"], Refresh(new() { ["chs"] = value! }));
     }
 
     [Fact]
-    public void AvailableSubtitleSymlinkChainsKeepTheirOriginalSourceLink()
+    public void TrimsEntriesAndUsesFirstCaseInsensitiveKeyMatch()
     {
-        string sourceDir = Directory.CreateDirectory(Path.Combine(_root, "source")).FullName;
-        string destDir = Directory.CreateDirectory(Path.Combine(_root, "vfs")).FullName;
-        string video = Path.Combine(sourceDir, "Episode.mkv");
-        string subtitle = Path.Combine(sourceDir, "Episode.chs.ass");
-        File.WriteAllText(video, "video fixture");
-        File.WriteAllText(Path.Combine(sourceDir, "content"), "subtitle fixture");
-        File.CreateSymbolicLink(Path.Combine(sourceDir, "intermediate"), "content");
+        Add("Episode.CHS.ass");
+        Assert.Equal(["zh-Hans.ass=CHS.ass"], Refresh(new() { [" chs "] = " zh-Hans ", ["CHS"] = "ja" }));
+    }
+
+    [CaseSensitiveFileSystemFact]
+    public void CaseOnlyAliasDuplicatesUseStableFilenameOrder()
+    {
+        string upper = Add("Episode.CHS.ass");
+        string lower = Add("Episode.chs.ass");
+        Assert.Equal(["zh-Hans.ass=CHS.ass"], Refresh(Mappings, [lower, upper]));
+        Assert.Equal(["zh-Hans.ass=CHS.ass"], Refresh(Mappings, [upper, lower]));
+        Assert.Equal(["CHS.ass=CHS.ass", "chs.ass=chs.ass"], Refresh([]));
+    }
+
+    [CaseSensitiveFileSystemFact]
+    public void UnchangedCaseVariantsAndOtherSidecarsRemainAvailable()
+    {
+        foreach (string suffix in new[] { "ZH-HANS.ass", "zh-Hans.ass", "chs.ass", "en.srt", "EN.srt", "chs.NFO", "chs.nfo" })
+            Add("Episode." + suffix);
+        Assert.Equal(["EN.srt=EN.srt", "ZH-HANS.ass=ZH-HANS.ass", "chs.NFO=chs.NFO", "chs.nfo=chs.nfo", "en.srt=en.srt", "zh-Hans.ass=zh-Hans.ass"], Refresh(Mappings));
+    }
+
+    [Theory]
+    [InlineData("missing", "chs")]
+    [InlineData("cycle", "chs")]
+    [InlineData("directory", "chs")]
+    [InlineData("missing", "zh-Hans")]
+    [InlineData("cycle", "zh-Hans")]
+    public void UnavailableSourcesCannotWinCollisions(string kind, string suffix)
+    {
+        Add("Episode.sc.ass");
+        File.CreateSymbolicLink(Path.Combine(_sourceDir, "Episode." + suffix + ".ass"), kind == "directory" ? "." : "unavailable");
+        if (kind == "cycle")
+            File.CreateSymbolicLink(Path.Combine(_sourceDir, "unavailable"), "Episode." + suffix + ".ass");
+        Assert.Equal(["zh-Hans.ass=sc.ass"], Refresh(Mappings));
+    }
+
+    [Fact]
+    public void AvailableSymlinkChainsRetainTheirImmediateSource()
+    {
+        Add("content");
+        File.CreateSymbolicLink(Path.Combine(_sourceDir, "intermediate"), "content");
+        string subtitle = Path.Combine(_sourceDir, "Episode.chs.ass");
         File.CreateSymbolicLink(subtitle, "intermediate");
-        Refresh(video, destDir, [new() { OriginalSuffix = "chs", FinalSuffix = "zh-Hans" }]);
-        string output = Path.Combine(destDir, "S01E01.zh-Hans.ass");
-        Assert.Equal("subtitle fixture", File.ReadAllText(output));
-        Assert.Equal(subtitle, File.ResolveLinkTarget(output, false)!.FullName);
+        Assert.Equal(["zh-Hans.ass=chs.ass"], Refresh(Mappings));
+        Assert.Equal(subtitle, File.ResolveLinkTarget(Path.Combine(_destDir, "S01E01.zh-Hans.ass"), false)!.FullName);
         Assert.Equal("intermediate", new FileInfo(subtitle).LinkTarget);
     }
 
@@ -195,80 +236,136 @@ public class SubtitleLinkingTests : IDisposable
     [InlineData(6, 300, true)]
     [InlineData(247, 7, false)]
     [InlineData(247, 7, true)]
-    public void RejectedConversionNamesRetainUsableSubtitlesAcrossRefreshes(int baseLength, int suffixLength, bool skipExistenceCheck)
+    public void RejectedDestinationFallsBackAndSurvivesCleanup(int baseLength, int suffixLength, bool skipExistenceCheck)
     {
-        string sourceDir = Directory.CreateDirectory(Path.Combine(_root, "source")).FullName;
-        string destDir = Directory.CreateDirectory(Path.Combine(_root, "vfs")).FullName;
-        string video = Path.Combine(sourceDir, "Episode.mkv");
-        string subtitle = Path.Combine(sourceDir, "Episode.chs.ass");
-        File.WriteAllText(video, "video fixture");
-        File.WriteAllText(subtitle, "subtitle fixture");
+        string source = Add("Episode.chs.ass");
         string destBase = new('E', baseLength);
-        string longSuffix = new('x', suffixLength);
-        var rules = SubtitleRenameRule.Normalize([
-            new() { OriginalSuffix = "chs", FinalSuffix = longSuffix },
-            new() { OriginalSuffix = "chs", FinalSuffix = longSuffix + "y" },
-            new() { OriginalSuffix = "chs", FinalSuffix = "ja" },
-        ]);
-
-        Refresh(video, destDir, [], destBase: destBase);
-        foreach (bool skipCheck in new[] { skipExistenceCheck, false })
-        {
-            Refresh(video, destDir, rules, destBase: destBase, skipExistenceCheck: skipCheck);
-            Assert.Equal([destBase + ".chs.ass", destBase + ".ja.ass"], Names(destDir));
-            foreach (string name in Names(destDir))
-                Assert.Equal(subtitle, File.ResolveLinkTarget(Path.Combine(destDir, name), true)!.FullName);
-        }
-
-        Refresh(video, destDir, [rules[2]], destBase: destBase);
-        Assert.Equal(destBase + ".ja.ass", Assert.Single(Names(destDir)));
-        Refresh(video, destDir, [], destBase: destBase);
-        Assert.Equal(destBase + ".chs.ass", Assert.Single(Names(destDir)));
-        Assert.Equal("subtitle fixture", File.ReadAllText(subtitle));
+        var mappings = new OrderedDictionary<string, string> { ["chs"] = new('x', suffixLength) };
+        Refresh(mappings, destBase: destBase, skipExistenceCheck: skipExistenceCheck);
+        Refresh(mappings, destBase: destBase);
+        string output = Assert.Single(Directory.EnumerateFiles(_destDir));
+        Assert.Equal(destBase + ".chs.ass", Path.GetFileName(output));
+        Assert.Equal(source, File.ResolveLinkTarget(output, true)!.FullName);
     }
 
-    private static void Refresh(string video, string destDir, IReadOnlyList<SubtitleRenameRule> rules, IReadOnlyList<string>? formats = null, string destBase = "S01E01", bool skipExistenceCheck = false)
+    [Theory]
+    [InlineData("S01E01 [42]")]
+    [InlineData("Movie (2024)")]
+    public void LinksWithTvAndMovieNamesAndEitherExistenceCheckMode(string destBase)
     {
-        var linker = new VfsAssetLinker(null!); // Video service is only used by local-extra discovery.
-        var cache = new ConcurrentDictionary<string, Lazy<string[]>>(StringComparer.Ordinal);
-        var expected = new HashSet<string>(StringComparer.Ordinal);
+        Add("Episode.chs.ass");
+        Add("Episode.sc.ass");
+        Refresh(Mappings, destBase: destBase, skipExistenceCheck: true);
+        Refresh(Mappings, destBase: destBase);
+        Assert.Equal(destBase + ".zh-Hans.ass", Path.GetFileName(Assert.Single(Directory.EnumerateFiles(_destDir))));
+    }
+
+    [Fact]
+    public void AStaleVfsLinkIsNotAnOriginalSource()
+    {
+        string source = Add("Episode.chs.ass");
+        File.CreateSymbolicLink(Path.Combine(_destDir, "S01E01.zh-Hans.ass"), Add("stale"));
+        Assert.Equal(["zh-Hans.ass=chs.ass"], Refresh(Mappings));
+        Assert.Equal(source, File.ResolveLinkTarget(Path.Combine(_destDir, "S01E01.zh-Hans.ass"), true)!.FullName);
+    }
+
+    [Fact]
+    public void BlueprintOnlyModeSelectsTheSameWinnerWithoutCreatingLinks()
+    {
+        Add("Episode.sc.ass");
+        Add("Episode.chs.ass");
+        _settings.Advanced.DisableVfsGeneration = true;
+        Assert.Equal(["zh-Hans.ass=chs.ass"], Refresh(Mappings));
+        Assert.Empty(Directory.EnumerateFiles(_destDir));
+        _settings.Advanced.DisableVfsGeneration = false;
+        Assert.Equal(["zh-Hans.ass=chs.ass"], Refresh(Mappings));
+    }
+
+    [Fact]
+    public void UnrecoverableLinkFailureIsReportedAndOtherSubtitlesStillLink()
+    {
+        Add("Episode.chs.ass");
+        string traditional = Add("Episode.cht.ass");
+        Directory.CreateDirectory(Path.Combine(_destDir, "S01E01.zh-Hans.ass"));
+        Directory.CreateDirectory(Path.Combine(_destDir, "S01E01.chs.ass"));
+        _settings.Advanced.SubtitleLanguageMappings = Mappings;
+        var callbacks = new Dictionary<string, string?>();
         var errors = new List<string>();
         int planned = 0,
             skipped = 0,
             created = 0;
-        linker.LinkEpisodeMetadata(
-            video,
-            Path.GetDirectoryName(video)!,
+        new VfsAssetLinker(null!).LinkEpisodeMetadata(_video, _sourceDir, "S01E01", _destDir, new(), ref planned, ref skipped, errors, ref created, (name, source) => callbacks.Add(name, source));
+        Assert.Equal(1, planned);
+        Assert.Equal(1, created);
+        Assert.Equal(1, skipped);
+        Assert.Contains("Episode.chs.ass", Assert.Single(errors));
+        var callback = Assert.Single(callbacks);
+        Assert.Equal("S01E01.zh-Hant.ass", callback.Key);
+        Assert.Equal(traditional, callback.Value);
+        Assert.Equal(traditional, File.ResolveLinkTarget(Path.Combine(_destDir, callback.Key), false)!.FullName);
+    }
+
+    private string Add(string name)
+    {
+        string path = Path.Combine(_sourceDir, name);
+        File.WriteAllText(path, name);
+        return path;
+    }
+
+    private string[] Refresh(OrderedDictionary<string, string> mappings, IEnumerable<string>? candidateOrder = null, string destBase = "S01E01", bool skipExistenceCheck = false)
+    {
+        _settings.Advanced.SubtitleLanguageMappings = mappings;
+        var cache = new ConcurrentDictionary<string, Lazy<string[]>>(StringComparer.Ordinal);
+        if (candidateOrder != null)
+            cache[_sourceDir] = new Lazy<string[]>(() => [.. candidateOrder]);
+        var expected = new HashSet<string>(StringComparer.Ordinal);
+        var expectedTargets = new Dictionary<string, string>(StringComparer.Ordinal);
+        var descriptions = new List<string>();
+        var errors = new List<string>();
+        int planned = 0,
+            skipped = 0,
+            created = 0;
+        new VfsAssetLinker(null!).LinkEpisodeMetadata(
+            _video,
+            _sourceDir,
             destBase,
-            destDir,
+            _destDir,
             cache,
             ref planned,
             ref skipped,
             errors,
             ref created,
-            (name, _) => expected.Add(Path.Combine(destDir, name)),
-            skipExistenceCheck: skipExistenceCheck,
-            subtitleRules: rules,
-            subtitleFormats: formats ?? []
+            (name, source) =>
+            {
+                expected.Add(Path.Combine(_destDir, name));
+                expectedTargets.Add(Path.Combine(_destDir, name), source!);
+                descriptions.Add(name[(destBase.Length + 1)..] + "=" + Path.GetFileName(source)!["Episode.".Length..]);
+            },
+            skipExistenceCheck
         );
-        VfsHelper.CleanupOrphanedFilesAndFolders([destDir], expected);
+        if (!_settings.Advanced.DisableVfsGeneration)
+        {
+            VfsHelper.CleanupOrphanedFilesAndFolders([_destDir], expected);
+            Assert.Equal(expected.Order(StringComparer.Ordinal), Directory.EnumerateFiles(_destDir).Order(StringComparer.Ordinal));
+            foreach (var (path, source) in expectedTargets)
+                Assert.Equal(source, File.ResolveLinkTarget(path, false)!.FullName);
+        }
         Assert.Empty(errors);
         Assert.Equal(0, skipped);
         Assert.Equal(expected.Count, planned);
         Assert.Equal(expected.Count, created);
+        return [.. descriptions.Order(StringComparer.Ordinal)];
     }
-
-    private static string[] Names(string directory) => [.. Directory.EnumerateFiles(directory).Select(Path.GetFileName).Order(StringComparer.Ordinal).Cast<string>()];
 
     public void Dispose()
     {
+        _providerField.SetValue(null, _previousProvider);
         if (Directory.Exists(_root))
             Directory.Delete(_root, true);
         GC.SuppressFinalize(this);
     }
 }
 
-/// <summary>Checks the actual test-output volume before creating case-only filenames.</summary>
 public sealed class CaseSensitiveFileSystemFactAttribute : FactAttribute
 {
     public CaseSensitiveFileSystemFactAttribute()
