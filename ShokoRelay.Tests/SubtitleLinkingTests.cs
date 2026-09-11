@@ -99,7 +99,10 @@ public class SubtitleLinkingTests : IDisposable
     [InlineData("_en.srt")]
     [InlineData("-en.srt")]
     [InlineData(" [English].ass")]
-    public void EmptyRulesPreserveLegacySidecarNamesThroughCleanup(string suffix)
+    [InlineData("[English].ass")]
+    [InlineData("(English).srt")]
+    [InlineData("+en.srt")]
+    public void LegacySidecarNamesSurviveRulesAndCleanup(string suffix)
     {
         string sourceDir = Directory.CreateDirectory(Path.Combine(_root, "source")).FullName;
         string destDir = Directory.CreateDirectory(Path.Combine(_root, "vfs")).FullName;
@@ -107,9 +110,84 @@ public class SubtitleLinkingTests : IDisposable
         string subtitle = Path.Combine(sourceDir, "Episode" + suffix);
         File.WriteAllText(video, "video fixture");
         File.WriteAllText(subtitle, "subtitle fixture");
+        foreach (SubtitleRenameRule[] rules in new SubtitleRenameRule[][] { [], [new() { OriginalSuffix = "chs", FinalSuffix = "zh-Hans" }], [] })
+        {
+            Refresh(video, destDir, rules);
+            Assert.Equal("S01E01" + suffix, Assert.Single(Names(destDir)));
+            Assert.Equal(subtitle, File.ResolveLinkTarget(Path.Combine(destDir, "S01E01" + suffix), true)!.FullName);
+        }
+    }
+
+    [Theory]
+    [InlineData("missing")]
+    [InlineData("cycle")]
+    [InlineData("directory")]
+    public void UnavailablePreferredSubtitleDoesNotDisplaceAnAvailableFormat(string targetKind)
+    {
+        string sourceDir = Directory.CreateDirectory(Path.Combine(_root, "source")).FullName;
+        string destDir = Directory.CreateDirectory(Path.Combine(_root, "vfs")).FullName;
+        string video = Path.Combine(sourceDir, "Episode.mkv");
+        string ass = Path.Combine(sourceDir, "Episode.chs.ass");
+        string srt = Path.Combine(sourceDir, "Episode.chs.srt");
+        File.WriteAllText(video, "video fixture");
+        File.WriteAllText(srt, "SRT fixture");
+        File.CreateSymbolicLink(ass, targetKind == "directory" ? "." : "unavailable");
+        if (targetKind == "cycle")
+            File.CreateSymbolicLink(Path.Combine(sourceDir, "unavailable"), "Episode.chs.ass");
+        SubtitleRenameRule[] rules = [new() { OriginalSuffix = "chs", FinalSuffix = "zh-Hans" }];
+
         Refresh(video, destDir, []);
-        Assert.Equal("S01E01" + suffix, Assert.Single(Names(destDir)));
-        Assert.Equal(subtitle, File.ResolveLinkTarget(Path.Combine(destDir, "S01E01" + suffix), true)!.FullName);
+        Assert.Equal("S01E01.chs.srt", Assert.Single(Names(destDir)));
+        Refresh(video, destDir, rules);
+        Assert.Equal("S01E01.zh-Hans.srt", Assert.Single(Names(destDir)));
+        Assert.Equal("SRT fixture", File.ReadAllText(Path.Combine(destDir, "S01E01.zh-Hans.srt")));
+
+        File.Delete(ass);
+        File.WriteAllText(ass, "ASS fixture");
+        Refresh(video, destDir, rules);
+        Assert.Equal("S01E01.zh-Hans.ass", Assert.Single(Names(destDir)));
+        Assert.Equal("ASS fixture", File.ReadAllText(Path.Combine(destDir, "S01E01.zh-Hans.ass")));
+        Assert.Equal("SRT fixture", File.ReadAllText(srt));
+    }
+
+    [Theory]
+    [InlineData("scjp")]
+    [InlineData("zh-Hans")]
+    public void UnavailableSourceOrExistingTargetAllowsTheNextSource(string unavailableSuffix)
+    {
+        string sourceDir = Directory.CreateDirectory(Path.Combine(_root, "source")).FullName;
+        string destDir = Directory.CreateDirectory(Path.Combine(_root, "vfs")).FullName;
+        string video = Path.Combine(sourceDir, "Episode.mkv");
+        File.WriteAllText(video, "video fixture");
+        File.WriteAllText(Path.Combine(sourceDir, "Episode.chs.srt"), "available fixture");
+        File.CreateSymbolicLink(Path.Combine(sourceDir, "Episode." + unavailableSuffix + ".ass"), "missing");
+        SubtitleRenameRule[] rules =
+        [
+            new() { OriginalSuffix = "scjp", FinalSuffix = "zh-Hans" },
+            new() { OriginalSuffix = "scjp", FinalSuffix = "ja" },
+            new() { OriginalSuffix = "chs", FinalSuffix = "zh-Hans" },
+        ];
+        Refresh(video, destDir, rules);
+        Assert.Equal("S01E01.zh-Hans.srt", Assert.Single(Names(destDir)));
+        Assert.Equal("available fixture", File.ReadAllText(Path.Combine(destDir, "S01E01.zh-Hans.srt")));
+    }
+
+    [Fact]
+    public void AvailableSubtitleSymlinkChainsKeepTheirOriginalSourceLink()
+    {
+        string sourceDir = Directory.CreateDirectory(Path.Combine(_root, "source")).FullName;
+        string destDir = Directory.CreateDirectory(Path.Combine(_root, "vfs")).FullName;
+        string video = Path.Combine(sourceDir, "Episode.mkv");
+        string subtitle = Path.Combine(sourceDir, "Episode.chs.ass");
+        File.WriteAllText(video, "video fixture");
+        File.WriteAllText(Path.Combine(sourceDir, "content"), "subtitle fixture");
+        File.CreateSymbolicLink(Path.Combine(sourceDir, "intermediate"), "content");
+        File.CreateSymbolicLink(subtitle, "intermediate");
+        Refresh(video, destDir, [new() { OriginalSuffix = "chs", FinalSuffix = "zh-Hans" }]);
+        string output = Path.Combine(destDir, "S01E01.zh-Hans.ass");
+        Assert.Equal("subtitle fixture", File.ReadAllText(output));
+        Assert.Equal(subtitle, File.ResolveLinkTarget(output, false)!.FullName);
+        Assert.Equal("intermediate", new FileInfo(subtitle).LinkTarget);
     }
 
     [Theory]

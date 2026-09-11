@@ -113,6 +113,7 @@ public class SubtitleRenameRuleTests
     [InlineData("""[null,"",".","..ass","ass.","s/rt","s\\rt","s:rt","s rt","s*rt","s?rt","s\"rt","s<rt","s>rt","s|rt","srt"]""", "srt")]
     [InlineData("""["sr\nt","s\u0000rt","ſrt","ＡＳＳ","字幕","12345678901","srt"]""", "srt")]
     [InlineData("""["sub","sup","123"]""", "")]
+    [InlineData("""["\ud800","srt","\udfff"]""", "srt")]
     public void NormalizesFormatPreferencesOnLoadAndSave(string preferences, string expected)
     {
         string root = Path.Combine(AppContext.BaseDirectory, "config-test-" + Guid.NewGuid().ToString("N"));
@@ -229,6 +230,12 @@ public class SubtitleRenameRuleTests
         """[{"OriginalSuffix":"chs","FinalSuffix":"zh-Hans"},17]"""
     )]
     [InlineData("[null]")]
+    [InlineData( /*lang=json,strict*/
+        """[{"OriginalSuffix":"\ud800","FinalSuffix":"zh-Hans"}]"""
+    )]
+    [InlineData( /*lang=json,strict*/
+        """[{"OriginalSuffix":"chs","FinalSuffix":"\udfff"}]"""
+    )]
     public void MalformedRulesDisableOnlySubtitleConversion(string rules)
     {
         string root = Path.Combine(AppContext.BaseDirectory, "config-test-" + Guid.NewGuid().ToString("N"));
@@ -270,6 +277,71 @@ public class SubtitleRenameRuleTests
             Assert.Empty(loaded.Advanced.SubtitleRenameRules);
             Assert.Equal(["ass", "ssa", "srt", "vtt", "smi"], loaded.Advanced.SubtitleFormatPreference);
             Assert.Equal("EN", loaded.SeriesTitleLanguage);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, true);
+        }
+    }
+
+    [Theory]
+    [InlineData( /*lang=json,strict*/
+        """{"SeriesTitleLanguage":"JA","SeriesTitleLanguage":"EN","Advanced":{"VfsRootPath":"!CustomVFS"}}"""
+    )]
+    [InlineData( /*lang=json,strict*/
+        """{"SeriesTitleLanguage":"EN","Advanced":{"VfsRootPath":"!Old","VfsRootPath":"!CustomVFS"}}"""
+    )]
+    [InlineData( /*lang=json,strict*/
+        """{"SeriesTitleLanguage":"EN","Unused":1,"Unused":2,"Advanced":{"VfsRootPath":"!CustomVFS"}}"""
+    )]
+    [InlineData( /*lang=json,strict*/
+        """{"SeriesTitleLanguage":"EN","Unused":"\ud800","Advanced":{"VfsRootPath":"!CustomVFS"}}"""
+    )]
+    [InlineData( /*lang=json,strict*/
+        """{"SeriesTitleLanguage":"EN","Advanced":{"Unused":"\udfff","VfsRootPath":"!CustomVFS"}}"""
+    )]
+    public void SubtitleParsingPreservesUnrelatedSerializerBehavior(string json)
+    {
+        string root = Path.Combine(AppContext.BaseDirectory, "config-test-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var provider = new ConfigProvider(new TestApplicationPaths(root));
+            File.WriteAllText(Path.Combine(provider.ConfigDirectory, ShokoRelayConstants.FilePreferences), json);
+            var loaded = provider.GetSettings();
+            Assert.Equal("EN", loaded.SeriesTitleLanguage);
+            Assert.Equal("!CustomVFS", loaded.Advanced.VfsRootPath);
+            Assert.Empty(loaded.Advanced.SubtitleRenameRules);
+            Assert.Equal(["ass", "ssa", "srt", "vtt", "smi"], loaded.Advanced.SubtitleFormatPreference);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, true);
+        }
+    }
+
+    [Fact]
+    public void DuplicateSubtitlePropertiesUseTheLastValue()
+    {
+        string root = Path.Combine(AppContext.BaseDirectory, "config-test-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var provider = new ConfigProvider(new TestApplicationPaths(root));
+            File.WriteAllText(
+                Path.Combine(provider.ConfigDirectory, ShokoRelayConstants.FilePreferences),
+                /*lang=json,strict*/
+                """
+                {"SeriesTitleLanguage":"EN","Advanced":{
+                  "SubtitleRenameRules":"invalid earlier value",
+                  "SubtitleRenameRules":[{"OriginalSuffix":"chs","FinalSuffix":"zh-Hans"}],
+                  "SubtitleFormatPreference":["ass"],"SubtitleFormatPreference":["srt"]}}
+                """
+            );
+            var loaded = provider.GetSettings();
+            Assert.Equal("EN", loaded.SeriesTitleLanguage);
+            Assert.Equal("zh-Hans", Assert.Single(loaded.Advanced.SubtitleRenameRules).FinalSuffix);
+            Assert.Equal(["srt"], loaded.Advanced.SubtitleFormatPreference);
         }
         finally
         {
