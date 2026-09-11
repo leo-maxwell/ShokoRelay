@@ -1,8 +1,10 @@
 name: Build & Test
 
 on:
+  push:
+    branches: [subtitle-rename-with-tests]
   pull_request:
-    branches: [master]
+    branches: [subtitle-rename-with-tests]
   workflow_dispatch:
 
 permissions:

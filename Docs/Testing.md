@@ -2,13 +2,15 @@
 
 The solution includes a small xUnit test project targeting .NET 10. Tests exercise the plugin assembly directly. Shoko Server and Plex are not required for the automated tests.
 
+The suite and its infrastructure live on `subtitle-rename-with-tests`. The upstream feature branch, `subtitle-rename`, contains no tests or test dependencies. Feature changes flow in one direction: `subtitle-rename` → `subtitle-rename-with-tests` → `subtitle-rename-testing`. Merge feature changes into the tests branch before incorporating them into an installable testing build; never merge tests or testing-release changes back into `subtitle-rename`.
+
 ```sh
 dotnet restore ShokoRelay.slnx
 dotnet build ShokoRelay.slnx --no-restore -c Release
 dotnet test ShokoRelay.Tests/ShokoRelay.Tests.csproj --no-build --no-restore -c Release
 ```
 
-The Build & Test workflow runs these commands on Linux for pull requests targeting `master` and can also be started manually. Filesystem fixtures are created beside the test assembly, so they use the checkout's volume rather than the system temporary volume. The physical case-only filename test probes that volume and is skipped only when it is case-insensitive. It runs locally on a case-sensitive macOS volume as well as in Linux CI. Case ambiguity and selection are also covered with in-memory filenames on every platform.
+The Build & Test workflow runs these commands on Linux for pushes and pull requests targeting `subtitle-rename-with-tests` and can also be started manually. Filesystem fixtures are created beside the test assembly, so they use the checkout's volume rather than the system temporary volume. The physical case-only filename test probes that volume and is skipped only when it is case-insensitive. It runs locally on a case-sensitive macOS volume as well as in Linux CI. Case ambiguity and selection are also covered with in-memory filenames on every platform.
 
 ## Scope
 
@@ -42,7 +44,7 @@ This branch publishes a separate testing feed:
 https://raw.githubusercontent.com/leo-maxwell/ShokoRelay/subtitle-rename-testing/manifest.json
 ```
 
-Feature fixes belong on `subtitle-rename`; merge that branch into `subtitle-rename-testing` before releasing. Keep these manifest and publishing changes on the testing branch. Never merge the testing branch into the feature branch or upstream `master`.
+Before releasing, merge `subtitle-rename` into `subtitle-rename-with-tests`, then merge `subtitle-rename-with-tests` into `subtitle-rename-testing`. Keep manifest and publishing changes on the testing branch. Never merge either testing branch into the feature branch or upstream `master`.
 
 Publish a GitHub prerelease from a tag such as `v0.17.4-dev.1001` on this branch. The first three version components must match `ShokoRelayConstants.Version`; testing revisions range from 1001 to 65534. Each build needs a new tag and version. The release workflow verifies branch ancestry, runs the tests, builds Linux ARM64, Linux x64, and Windows x64 archives with matching assembly versions, then updates only this branch's manifest. Completed release assets are not overwritten; rerun failed jobs or create a new version.
 
