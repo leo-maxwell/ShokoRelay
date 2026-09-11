@@ -1,8 +1,8 @@
 # Testing
 
-The solution includes a small xUnit test project targeting .NET 10. Tests exercise the plugin assembly directly. Shoko Server and Plex are not required for the automated tests.
+The xUnit project targets .NET 10 and exercises the production configuration provider, subtitle linker, symlinks, blueprint callbacks, and cleanup helpers. Shoko Server and Plex are not required for automated tests.
 
-The suite and its infrastructure live on `subtitle-rename-with-tests`. The upstream feature branch, `subtitle-rename`, contains no tests or test dependencies. Feature changes flow in one direction: `subtitle-rename` → `subtitle-rename-with-tests` → `subtitle-rename-testing`. Merge feature changes into the tests branch before incorporating them into an installable testing build; never merge tests or testing-release changes back into `subtitle-rename`.
+The suite and its infrastructure live on `subtitle-rename-with-tests`. The upstream feature branch, `subtitle-rename`, contains no tests or test dependencies. Changes flow in one direction: `subtitle-rename` → `subtitle-rename-with-tests` → `subtitle-rename-testing`. Merge feature changes into the tests branch before incorporating them into the installable testing branch. Never merge tests or testing-release changes back into the feature branch.
 
 ```sh
 dotnet restore ShokoRelay.slnx
@@ -10,19 +10,26 @@ dotnet build ShokoRelay.slnx --no-restore -c Release
 dotnet test ShokoRelay.Tests/ShokoRelay.Tests.csproj --no-build --no-restore -c Release
 ```
 
-The Build & Test workflow runs these commands on Linux for pushes and pull requests targeting `subtitle-rename-with-tests` and can also be started manually. Filesystem fixtures are created beside the test assembly, so they use the checkout's volume rather than the system temporary volume. The physical case-only filename test probes that volume and is skipped only when it is case-insensitive. It runs locally on a case-sensitive macOS volume as well as in Linux CI. Case ambiguity and selection are also covered with in-memory filenames on every platform.
+The Build & Test workflow runs these commands on Linux for pushes and pull requests targeting `subtitle-rename-with-tests`, and can also be started manually. Filesystem fixtures use the checkout volume, beside the test assembly. Physical case-only filename tests are skipped only when that volume is case-insensitive. They run on the local case-sensitive macOS workspace and in Linux CI.
 
-## Scope
+## Behavior covered
 
-- Rule-selection tests specify expected output-to-source mappings, including independent output priority, existing final suffixes, format preference, repeated input suffixes, case ambiguity passthrough, compound suffixes, empty rules, and non-chaining behavior. Reversed directory enumeration must give the same results.
-- Configuration tests cover filename-safe suffix validation, persistence of ordered rules with repeated source suffixes, rejected saves, and safe loading of invalid externally edited rules. Malformed subtitle JSON values, including invalid Unicode, must preserve unrelated settings. Duplicate properties and ignored unknown fields retain the existing serializer behavior. Format preferences are checked on both load and save, including normalization, ignored invalid and unsupported entries, and defaults for older configurations. The dashboard schema must omit both subtitle options, while ordinary settings saves preserve them.
-- Filesystem tests use temporary directories and the production linker and cleanup helpers. They verify symlink targets, repeated refreshes, rule and format reordering, removal of obsolete links, restoring original suffixes, unchanged source files, and exclusion of unsupported formats. Legacy sidecar names, including punctuation and space separators, survive with rules enabled or disabled. Missing and cyclic source links must not displace an available format or source; healthy symlink chains remain usable. Rejected output filenames must retain usable original-suffix links through cleanup, including long video basenames and repeated fallback destinations.
+- Real link targets specify existing-name precedence and mapping-order priority. Reversing discovery order must not change the winner. Different extensions and flags remain independent; no format is ranked or suppressed merely because another format exists.
+- Language-token matching is literal and case-insensitive. Flags are preserved, aliases are explicit, and replacements are not processed recursively. A source creates at most one output. Tests cover identity, circular, multi-token, and duplicate-case mappings.
+- NFO files and artwork retain their names. Legacy subtitle separators and suffixless subtitles remain usable. Alphanumeric continuations of the video basename cannot be claimed by a prefix match; punctuation-separated names retain the existing discovery behavior. Unsupported subtitle formats remain unsupported.
+- Reordering mappings, clearing them, repeated refreshes, and stale VFS links exercise actual symlink replacement and orphan cleanup. Source contents remain unchanged. The same linker is tested with TV and movie destination names, existence-check modes, and blueprint-only mode.
+- Missing, cyclic, or directory subtitle targets cannot win collisions. Healthy source symlink chains retain their immediate source link. Rejected destination filenames fall back to the original suffix and survive cleanup. If both destinations fail, the failure is reported and other subtitles still link.
+- Standard JSON serialization and configuration saves preserve mapping order and values. Missing or obsolete settings do not enable mappings. Invalid JSON or incompatible mapping types follow the existing whole-configuration defaults path without rewriting the file. Nulls, duplicate properties, trailing commas, and unknown fields follow the standard serializer behavior. The dashboard schema omits subtitle mappings; ordinary settings saves preserve them.
 
-When changing these behaviors, add or update a test describing the observable output. A coverage percentage is not required. Keep test dependencies in the test project; the plugin should continue to load in Shoko without them.
+The old planner tests, format-preference tests, multiple-output tests, and custom-converter isolation expectations have been replaced with these observable requirements. Test code sets the existing static configuration provider through reflection, restores it after each fixture, and disables parallel execution for linker fixtures; production code does not expose a test-only settings parameter.
+
+## Scope alignment
+
+The implementation follows the maintainer's small language-mapping approach: no dedicated rule class, custom converter, format ranking, multiple-output feature, separate planner file, or settings parameters threaded through VFS builders. Existing discovery/cache, linking, and cleanup remain in use.
+
+Two deliberate requirements refine the proposed sample: mapping order resolves colliding complete destination names after unchanged originals, and a built-in ordered dictionary preserves that order. Losing conversions are omitted, so collisions are an explicit exception to mirroring every valid sidecar. Case-insensitive matching, subtitle-only filtering, and preserved flags are part of the agreed scope.
 
 ## Formatting
-
-The existing Lint & Format workflow also checks CSharpier, `dotnet format`, Prettier, and Stylelint with the Concentric configuration. Restore the pinned .NET tool before running C# checks:
 
 ```sh
 dotnet tool restore
@@ -30,8 +37,10 @@ dotnet tool run csharpier check .
 dotnet format style ShokoRelay.slnx --verify-no-changes --severity info
 ```
 
-## Manual checks
+The upstream Lint & Format workflow also checks .NET style, Prettier, and Stylelint. Existing upstream findings must be distinguished from diagnostics introduced by this change; do not fix unrelated formatting as part of the subtitle feature.
 
-Edit the subtitle fields inside `Advanced` in `preferences.json`, following the [configuration example](../README.md#subtitle-suffix-rules). Reload the dashboard and confirm that no subtitle editor appears. Change an ordinary setting and verify that the file retains both subtitle options. Check that a VFS refresh picks up file edits without restarting Shoko, including changing the preferred format and clearing the rules to restore original suffixes.
+## Manual integration checks
 
-Before release, use a small series in Shoko to refresh TV and movie VFS links, inspect the resulting source targets, and verify subtitle detection and playback in Plex. Filename selection tests cannot establish Plex language recognition or playback behavior.
+Edit `Advanced.SubtitleLanguageMappings` in `preferences.json`, following the [configuration example](../README.md#subtitle-language-mappings). Reload the dashboard, change an ordinary setting, and confirm mapping order and values survive. Refresh a small TV series and a movie; inspect subtitle names and targets after reordering and clearing mappings. Verify that the existing file watcher reloads settings without restarting Shoko.
+
+Plex language recognition and playback require a live Shoko/Plex installation; automated filename and linker tests do not establish either. Testing-release publishing is a separate step, using only the testing branch's manifest and release workflow.
